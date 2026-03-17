@@ -57,24 +57,40 @@ self.addEventListener('message', function (e) {
       for (var i = 0; i < maskData.length; i += 4)
         maskMat.data[i / 4] = maskData[i + 3] > 10 ? 255 : 0;
 
-      // Dilate mask slightly so edges are fully covered
-      var kernel  = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(5, 5));
+      // Minimal dilation — just 1 px to cover brush edge aliasing
+      var kernel  = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(3, 3));
       var dilated = new cv.Mat();
       cv.dilate(maskMat, dilated, kernel);
 
-      // Run Telea inpainting on the 3-channel image
+      // Pass 1 – Navier-Stokes at tight radius for structure
+      var pass1 = new cv.Mat();
+      cv.inpaint(srcRGB, dilated, pass1, 3, cv.INPAINT_NS);
+
+      // Pass 2 – Telea at tight radius for texture detail
       var dstRGB = new cv.Mat();
-      cv.inpaint(srcRGB, dilated, dstRGB, 5, cv.INPAINT_TELEA);
+      cv.inpaint(pass1, dilated, dstRGB, 3, cv.INPAINT_TELEA);
+
+      // Sharpen with an unsharp mask (blurred copy subtracted from original)
+      var blurred = new cv.Mat();
+      cv.GaussianBlur(dstRGB, blurred, new cv.Size(0, 0), 1.5);
+      var sharpened = new cv.Mat();
+      cv.addWeighted(dstRGB, 1.6, blurred, -0.6, 0, sharpened);
+      blurred.delete();
+
+      // Blend: start from a copy of the original, then paste sharpened only inside the mask
+      var finalRGB = srcRGB.clone();
+      sharpened.copyTo(finalRGB, dilated);            // overwrite inside mask with inpainted+sharpened
+      sharpened.delete(); dstRGB.delete(); pass1.delete();
 
       // Convert result back to RGBA so it matches canvas pixel format
       var dstRGBA = new cv.Mat();
-      cv.cvtColor(dstRGB, dstRGBA, cv.COLOR_RGB2RGBA);
+      cv.cvtColor(finalRGB, dstRGBA, cv.COLOR_RGB2RGBA);
 
       var result = new Uint8ClampedArray(dstRGBA.data.length);
       result.set(dstRGBA.data);
 
       srcRGBA.delete(); srcRGB.delete(); maskMat.delete();
-      dilated.delete(); kernel.delete(); dstRGB.delete(); dstRGBA.delete();
+      dilated.delete(); kernel.delete(); finalRGB.delete(); dstRGBA.delete();
 
       postMessage({ type: 'result', data: result, width: width, height: height }, [result.buffer]);
     } catch (err) {
