@@ -10,27 +10,95 @@ import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
 import { motion, AnimatePresence } from 'framer-motion';
 
-declare global {
-  interface Window { cv: any; }
+// ─── Worker singleton (blob URL avoids MIME-type issues with Replit proxy) ─
+let _workerReadyPromise: Promise<Worker> | null = null;
+
+const WORKER_SRC = /* javascript */ `
+importScripts('https://docs.opencv.org/4.9.0/opencv.js');
+
+var cvReady = false;
+
+function notifyReady() {
+  cvReady = true;
+  postMessage({ type: 'ready' });
 }
 
-let cvPromise: Promise<any> | null = null;
-function loadOpenCV(): Promise<any> {
-  if (cvPromise) return cvPromise;
-  cvPromise = new Promise((resolve, reject) => {
-    if (window.cv?.Mat) { resolve(window.cv); return; }
-    const script = document.createElement('script');
-    script.src = 'https://docs.opencv.org/4.9.0/opencv.js';
-    script.async = true;
-    script.onload = () => { const w = () => { if (window.cv?.Mat) resolve(window.cv); else setTimeout(w, 50); }; w(); };
-    script.onerror = reject;
-    document.head.appendChild(script);
+if (typeof cv !== 'undefined' && cv.Mat) {
+  notifyReady();
+} else if (typeof cv !== 'undefined') {
+  cv['onRuntimeInitialized'] = notifyReady;
+}
+
+self.addEventListener('message', function (e) {
+  var type = e.data.type;
+
+  if (type === 'ping') {
+    postMessage({ type: cvReady ? 'ready' : 'loading' });
+    return;
+  }
+
+  if (type === 'inpaint') {
+    if (!cvReady) { postMessage({ type: 'error', message: 'OpenCV not ready' }); return; }
+    var imageData = e.data.imageData;
+    var maskData  = e.data.maskData;
+    var width     = e.data.width;
+    var height    = e.data.height;
+    try {
+      var src = new cv.Mat(height, width, cv.CV_8UC4);
+      src.data.set(imageData);
+      var maskMat = new cv.Mat(height, width, cv.CV_8UC1);
+      for (var i = 0; i < maskData.length; i += 4)
+        maskMat.data[i / 4] = maskData[i + 3] > 10 ? 255 : 0;
+      var kernel  = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(5, 5));
+      var dilated = new cv.Mat();
+      cv.dilate(maskMat, dilated, kernel);
+      var dst = new cv.Mat();
+      cv.inpaint(src, dilated, dst, 5, cv.INPAINT_TELEA);
+      var result = new Uint8ClampedArray(dst.data.length);
+      result.set(dst.data);
+      src.delete(); maskMat.delete(); dilated.delete(); kernel.delete(); dst.delete();
+      postMessage({ type: 'result', data: result, width: width, height: height }, [result.buffer]);
+    } catch (err) {
+      postMessage({ type: 'error', message: String(err) });
+    }
+  }
+});
+`;
+
+function getWorker(): Promise<Worker> {
+  if (_workerReadyPromise) return _workerReadyPromise;
+
+  _workerReadyPromise = new Promise<Worker>((resolve, reject) => {
+    const blob = new Blob([WORKER_SRC], { type: 'application/javascript' });
+    const blobUrl = URL.createObjectURL(blob);
+    const w = new Worker(blobUrl);
+
+    // Prevent the onerror from bubbling to the global error handler
+    w.onerror = (err) => {
+      err.preventDefault();
+      URL.revokeObjectURL(blobUrl);
+      reject(new Error(`Worker error: ${err.message || 'unknown'}`));
+    };
+
+    w.addEventListener('message', function handler(e) {
+      if (e.data.type === 'ready') {
+        w.removeEventListener('message', handler);
+        URL.revokeObjectURL(blobUrl); // free blob URL once worker is up
+        resolve(w);
+      }
+    });
+
+    w.postMessage({ type: 'ping' });
   });
-  return cvPromise;
+
+  return _workerReadyPromise;
 }
 
 export default function WatermarkRemover() {
   const { toast } = useToast();
+
+  // Kick off worker + OpenCV download in background immediately on page load
+  useEffect(() => { getWorker().catch(() => {}); }, []);
 
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [resultUrl, setResultUrl] = useState<string | null>(null);
@@ -166,7 +234,7 @@ export default function WatermarkRemover() {
     noDrag: !!imageFile,
   });
 
-  // ─── inpainting ───────────────────────────────────────────────────────────
+  // ─── inpainting (runs in Web Worker — never blocks the UI) ───────────────
   const processInpaint = async () => {
     if (!imageCanvasRef.current || !maskCanvasRef.current) return;
     if (!maskHasPixels.current) {
@@ -174,31 +242,48 @@ export default function WatermarkRemover() {
       return;
     }
     setIsProcessing(true);
-    toast({ title: 'Loading engine\u2026', description: 'Downloading OpenCV (first time ~8 MB, then cached).' });
+    toast({ title: 'Loading engine\u2026', description: 'First time downloads OpenCV (~8 MB, then cached). UI stays responsive.' });
+
     try {
-      const cv = await loadOpenCV();
       const ic = imageCanvasRef.current;
       const mc = maskCanvasRef.current;
-      const src = cv.imread(ic);
-      const maskData = mc.getContext('2d')!.getImageData(0, 0, mc.width, mc.height);
-      const maskMat = new cv.Mat(mc.height, mc.width, cv.CV_8UC1);
-      for (let i = 0; i < maskData.data.length; i += 4)
-        maskMat.data[i / 4] = maskData.data[i + 3] > 10 ? 255 : 0;
-      const kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(5, 5));
-      const dilated = new cv.Mat();
-      cv.dilate(maskMat, dilated, kernel);
-      const dst = new cv.Mat();
-      cv.inpaint(src, dilated, dst, 5, cv.INPAINT_TELEA);
+      const { width, height } = ic;
+
+      // Grab pixel data on the main thread before handing off to worker
+      const imageData = ic.getContext('2d')!.getImageData(0, 0, width, height).data;
+      const maskData  = mc.getContext('2d')!.getImageData(0, 0, width, height).data;
+
+      // Get (or lazily start) the worker, wait until OpenCV is initialised
+      const worker = await getWorker();
+
+      // Send data to worker and wait for result
+      const result = await new Promise<{ data: Uint8ClampedArray; width: number; height: number }>((resolve, reject) => {
+        const handler = (e: MessageEvent) => {
+          if (e.data.type === 'result') {
+            worker.removeEventListener('message', handler);
+            resolve(e.data);
+          } else if (e.data.type === 'error') {
+            worker.removeEventListener('message', handler);
+            reject(new Error(e.data.message));
+          }
+        };
+        worker.addEventListener('message', handler);
+        worker.postMessage(
+          { type: 'inpaint', imageData, maskData, width, height },
+          [imageData.buffer, maskData.buffer],   // transfer — zero copy
+        );
+      });
+
+      // Draw result onto a canvas and convert to object URL
       const rc = document.createElement('canvas');
-      rc.width = ic.width; rc.height = ic.height;
-      cv.imshow(rc, dst);
+      rc.width = result.width; rc.height = result.height;
+      rc.getContext('2d')!.putImageData(new ImageData(result.data, result.width, result.height), 0, 0);
       rc.toBlob((blob) => {
         if (blob) {
           setResultUrl(prev => { if (prev) URL.revokeObjectURL(prev); return URL.createObjectURL(blob!); });
           toast({ title: 'Done!', description: 'Watermark removed successfully.' });
         }
       }, 'image/png');
-      src.delete(); maskMat.delete(); dilated.delete(); kernel.delete(); dst.delete();
     } catch (err) {
       console.error(err);
       toast({ variant: 'destructive', title: 'Failed', description: err instanceof Error ? err.message : 'Processing error.' });
