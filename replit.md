@@ -54,7 +54,7 @@ artifacts-monorepo/
 - `/watermark` — Watermark Remover (canvas-based, OpenCV.js)
 - `/enhance` — Image Enhancer (pure-JS: bilateral denoise, CLAHE-like, Lanczos upscale)
 - `/pricing` — Credit packs pricing, daily free claim, Stripe checkout
-- `/admin` — Admin panel (users, stats, grant/deduct credits, toggle admin) — restricted to `isAdmin=true` users
+- `/admin` — Full professional admin panel (sidebar layout, auth via username/password cookie session)
 
 ## Auth System
 
@@ -75,13 +75,38 @@ artifacts-monorepo/
 - `GET /api/credits/products` — lists Stripe products with `credits` metadata
 - Stripe webhook at `POST /api/stripe/webhook` — credits added on `checkout.session.completed`
 
-## Admin API
+## Admin System
 
-- `GET /api/admin/stats` — totals: users, credits in circulation, transactions, credits issued
-- `GET /api/admin/users` — all users
-- `GET /api/admin/transactions` — recent transactions
-- `POST /api/admin/users/:id/credits` — grant or deduct credits
-- `POST /api/admin/users/:id/toggle-admin` — flip isAdmin flag
+### Authentication
+- Dedicated username/password login with HMAC-signed cookie (8h expiry)
+- `POST /api/admin/login` — authenticates with ADMIN_USERNAME + ADMIN_PASSWORD env vars
+- `GET /api/admin/session` — checks cookie validity
+- `POST /api/admin/logout-admin` — clears admin cookie
+- Also accepts Replit OIDC admin users (isAdmin flag)
+- Default credentials: admin / admin123 (set via ADMIN_USERNAME, ADMIN_PASSWORD, ADMIN_COOKIE_SECRET env vars)
+
+### Admin Panel Sections
+- **Dashboard** — 8 stat cards, 14-day area chart (users, credits granted/used), recent activity feed, top users leaderboard
+- **Users** — Searchable table, sliding detail panel with transaction history, credit adjustment modal, admin role toggle, user deletion
+- **Transactions** — Filterable table by type, pie chart breakdown (daily/purchase/use/admin_grant/refund)
+- **Revenue & Stripe** — Connection status cards, 30-day purchase bar chart, Stripe product listing, revenue metrics
+- **Settings** — System health (Node, DB, memory, uptime), admin credential update (session-scoped), env var reference
+
+### Admin API Endpoints
+- `GET /api/admin/dashboard` — comprehensive dashboard stats (users, credits, transactions, top users, recent activity)
+- `GET /api/admin/trends?days=14` — daily trends for charts
+- `GET /api/admin/stats` — basic totals
+- `GET /api/admin/users?q=` — user list with optional search
+- `GET /api/admin/users/:id` — user detail with transaction history
+- `POST /api/admin/users/:id/credits` — grant/deduct credits
+- `POST /api/admin/users/:id/toggle-admin` — flip admin role
+- `POST /api/admin/users/:id/reset-credits` — reset to zero
+- `DELETE /api/admin/users/:id` — delete user + all transactions
+- `GET /api/admin/transactions?type=` — filtered transaction list + breakdown
+- `GET /api/admin/revenue` — 30-day revenue chart data
+- `GET /api/admin/stripe/status` — Stripe connection + product status
+- `GET /api/admin/system` — system health (DB, memory, uptime, versions)
+- `POST /api/admin/settings/credentials` — update admin credentials (session-scoped)
 
 ## Database Schema
 
