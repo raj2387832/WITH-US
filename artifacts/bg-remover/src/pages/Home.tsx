@@ -26,7 +26,7 @@ export default function Home() {
           className="inline-flex items-center justify-center p-2 px-4 rounded-full bg-primary/10 text-primary mb-6 ring-1 ring-primary/20"
         >
           <Zap className="w-4 h-4 mr-2" />
-          <span className="text-sm font-semibold tracking-wide uppercase">100% In-Browser · No API · No Credits</span>
+          <span className="text-sm font-semibold tracking-wide uppercase">100% In-Browser · No Upload · 2 Free Daily Credits</span>
         </motion.div>
 
         <motion.h1
@@ -44,7 +44,7 @@ export default function Home() {
           transition={{ delay: 0.2 }}
           className="text-lg text-muted-foreground"
         >
-          Upload an image and the background is removed instantly — everything runs privately in your browser. No server, no API, no cost.
+          Upload an image and the background is removed instantly — everything runs privately in your browser. No server upload needed.
         </motion.p>
       </header>
 

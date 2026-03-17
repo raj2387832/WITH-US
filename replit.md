@@ -71,9 +71,17 @@ artifacts-monorepo/
 - `creditTransactionsTable` — audit log of every credit change (type: daily/purchase/use/admin/refund)
 - `POST /api/credits/claim-daily` — gives 2 free credits if not already claimed today
 - `GET /api/credits/balance` — returns current balance + canClaimDaily flag
+- `POST /api/credits/use` — deducts 1 credit for tool usage (returns 402 if insufficient), accepts `{ tool }` body
+- `POST /api/credits/fulfill` — idempotent client-side fulfillment after Stripe checkout (auth + session ownership check)
 - `POST /api/credits/checkout` — creates Stripe one-time payment checkout session
 - `GET /api/credits/products` — lists Stripe products with `credits` metadata
 - Stripe webhook at `POST /api/stripe/webhook` — credits added on `checkout.session.completed`
+
+### Credit Enforcement (Frontend)
+- All three tools (BG Remover, Watermark Remover, Image Enhancer) call `POST /api/credits/use` before processing
+- Shared `useCredits()` hook in `src/hooks/use-credits.ts` handles credit deduction + error states
+- Unauthenticated users are prompted to log in; users with 0 credits see "No credits" toast
+- Server-side `/api/remove-bg` proxy also enforces auth + credit deduction
 
 ## Admin System
 

@@ -4,6 +4,8 @@ import { Sparkles, Download, RefreshCw, Upload, Zap, SlidersHorizontal } from 'l
 import { Button } from '@/components/ui/button';
 import { ImageUploader } from '@/components/ImageUploader';
 import { ImageComparison } from '@/components/ImageComparison';
+import { useCredits } from '@/hooks/use-credits';
+import { useToast } from '@/hooks/use-toast';
 
 // ─── Pure-JS Enhancement Worker (no importScripts — starts instantly) ─────────
 const WORKER_SRC = `
@@ -325,6 +327,8 @@ function Slider({ label, value, onChange }: { label: string; value: number; onCh
 
 // ─── Main page ─────────────────────────────────────────────────────────────────
 export default function ImageEnhancer() {
+  const { useCredit, isAuthenticated, login } = useCredits();
+  const { toast } = useToast();
   const [originalUrl, setOriginalUrl]   = useState<string | null>(null);
   const [resultUrl, setResultUrl]       = useState<string | null>(null);
   const [originalFile, setOriginalFile] = useState<File | null>(null);
@@ -357,6 +361,26 @@ export default function ImageEnhancer() {
 
   const processImage = useCallback(async () => {
     if (!originalFile) return;
+
+    if (!isAuthenticated) {
+      toast({ variant: 'destructive', title: 'Sign in required', description: 'Please log in to process images.' });
+      login();
+      return;
+    }
+
+    const creditResult = await useCredit('Image Enhancement');
+    if (!creditResult.ok) {
+      if (creditResult.error === 'login_required') {
+        toast({ variant: 'destructive', title: 'Sign in required', description: 'Please log in to process images.' });
+        login();
+      } else if (creditResult.error === 'no_credits') {
+        toast({ variant: 'destructive', title: 'No credits', description: 'You need at least 1 credit. Claim your daily free credits or buy more on the Pricing page.' });
+      } else {
+        toast({ variant: 'destructive', title: 'Error', description: creditResult.error ?? 'Failed to use credit' });
+      }
+      return;
+    }
+
     setIsProcessing(true);
     setProgress(10);
     try {
@@ -404,7 +428,7 @@ export default function ImageEnhancer() {
       setIsProcessing(false);
       setProgress(0);
     }
-  }, [originalFile, settings, upscale]);
+  }, [originalFile, settings, upscale, isAuthenticated, login, useCredit, toast]);
 
   const downloadResult = useCallback(() => {
     if (!resultUrl) return;
@@ -419,7 +443,7 @@ export default function ImageEnhancer() {
         <motion.div initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }}
           className="inline-flex items-center justify-center p-2 px-4 rounded-full bg-primary/10 text-primary mb-5 ring-1 ring-primary/20">
           <Zap className="w-4 h-4 mr-2" />
-          <span className="text-sm font-semibold tracking-wide uppercase">100% In-Browser · No API · No Credits</span>
+          <span className="text-sm font-semibold tracking-wide uppercase">100% In-Browser · No Upload · 2 Free Daily Credits</span>
         </motion.div>
         <motion.h1 initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}
           className="text-4xl md:text-5xl font-extrabold mb-4 text-balance">

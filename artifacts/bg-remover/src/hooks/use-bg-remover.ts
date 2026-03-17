@@ -1,8 +1,10 @@
 import { useState, useCallback } from 'react';
 import { useToast } from '@/hooks/use-toast';
+import { useCredits } from '@/hooks/use-credits';
 
 export function useBgRemover() {
   const { toast } = useToast();
+  const { useCredit, isAuthenticated, login } = useCredits();
 
   const [originalFile, setOriginalFile] = useState<File | null>(null);
   const [originalUrl, setOriginalUrl] = useState<string | null>(null);
@@ -10,7 +12,6 @@ export function useBgRemover() {
   const [isProcessing, setIsProcessing] = useState(false);
 
   const handleFileSelect = useCallback((file: File) => {
-    // Revoke old URLs using functional updates so we always have the latest value
     setOriginalUrl(prev => {
       if (prev) URL.revokeObjectURL(prev);
       return URL.createObjectURL(file);
@@ -37,7 +38,25 @@ export function useBgRemover() {
   const processImage = useCallback(async () => {
     if (!originalFile || isProcessing) return;
 
-    // Clear old result without revoking the original
+    if (!isAuthenticated) {
+      toast({ variant: 'destructive', title: 'Sign in required', description: 'Please log in to process images.' });
+      login();
+      return;
+    }
+
+    const creditResult = await useCredit('Background Removal');
+    if (!creditResult.ok) {
+      if (creditResult.error === 'login_required') {
+        toast({ variant: 'destructive', title: 'Sign in required', description: 'Please log in to process images.' });
+        login();
+      } else if (creditResult.error === 'no_credits') {
+        toast({ variant: 'destructive', title: 'No credits', description: 'You need at least 1 credit. Claim your daily free credits or buy more on the Pricing page.' });
+      } else {
+        toast({ variant: 'destructive', title: 'Error', description: creditResult.error ?? 'Failed to use credit' });
+      }
+      return;
+    }
+
     setResultUrl(prev => {
       if (prev) URL.revokeObjectURL(prev);
       return null;
@@ -62,7 +81,7 @@ export function useBgRemover() {
       setResultUrl(url);
       toast({
         title: 'Done!',
-        description: 'Background removed successfully.',
+        description: `Background removed successfully. (${creditResult.balance} credits remaining)`,
       });
     } catch (error: unknown) {
       console.error('Processing failed:', error);
@@ -75,7 +94,7 @@ export function useBgRemover() {
     } finally {
       setIsProcessing(false);
     }
-  }, [originalFile, isProcessing, toast]);
+  }, [originalFile, isProcessing, toast, isAuthenticated, login, useCredit]);
 
   const downloadResult = useCallback(() => {
     if (!resultUrl) return;

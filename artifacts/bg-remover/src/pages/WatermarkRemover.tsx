@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Slider } from '@/components/ui/slider';
 import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
+import { useCredits } from '@/hooks/use-credits';
 import { motion, AnimatePresence } from 'framer-motion';
 
 // ─── Worker singleton (blob URL avoids MIME-type issues with Replit proxy) ─
@@ -314,8 +315,8 @@ function getWorker(): Promise<Worker> {
 
 export default function WatermarkRemover() {
   const { toast } = useToast();
+  const { useCredit, isAuthenticated, login } = useCredits();
 
-  // Kick off worker + OpenCV download in background immediately on page load
   useEffect(() => { getWorker().catch(() => {}); }, []);
 
   const [imageFile, setImageFile] = useState<File | null>(null);
@@ -459,6 +460,26 @@ export default function WatermarkRemover() {
       toast({ variant: 'destructive', title: 'No area selected', description: 'Paint over the watermark first.' });
       return;
     }
+
+    if (!isAuthenticated) {
+      toast({ variant: 'destructive', title: 'Sign in required', description: 'Please log in to process images.' });
+      login();
+      return;
+    }
+
+    const creditResult = await useCredit('Watermark Removal');
+    if (!creditResult.ok) {
+      if (creditResult.error === 'login_required') {
+        toast({ variant: 'destructive', title: 'Sign in required', description: 'Please log in to process images.' });
+        login();
+      } else if (creditResult.error === 'no_credits') {
+        toast({ variant: 'destructive', title: 'No credits', description: 'You need at least 1 credit. Claim your daily free credits or buy more on the Pricing page.' });
+      } else {
+        toast({ variant: 'destructive', title: 'Error', description: creditResult.error ?? 'Failed to use credit' });
+      }
+      return;
+    }
+
     setIsProcessing(true);
     toast({ title: 'Loading engine\u2026', description: 'First time downloads OpenCV (~8 MB, then cached). UI stays responsive.' });
 

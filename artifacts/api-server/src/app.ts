@@ -36,4 +36,11 @@ app.use(authMiddleware);
 
 app.use("/api", router);
 
+app.use((err: any, _req: any, res: any, _next: any) => {
+  console.error('Unhandled error:', err.message || err);
+  if (!res.headersSent) {
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 export default app;

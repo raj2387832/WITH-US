@@ -84,6 +84,15 @@ export class Storage {
     });
   }
 
+  async getTransactionByStripeSession(sessionId: string) {
+    const [tx] = await db
+      .select()
+      .from(creditTransactionsTable)
+      .where(eq(creditTransactionsTable.stripeSessionId, sessionId))
+      .limit(1);
+    return tx ?? null;
+  }
+
   async getCreditTransactions(userId: string, limit = 50) {
     return db
       .select()
