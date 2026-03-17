@@ -21,6 +21,10 @@ function notifyReady() { cvReady = true; postMessage({ type: 'ready' }); }
 if (typeof cv !== 'undefined' && cv.Mat) { notifyReady(); }
 else if (typeof cv !== 'undefined') { cv['onRuntimeInitialized'] = notifyReady; }
 
+// ─── Helpers ────────────────────────────────────────────────────────────────
+// Clamp integer to [0, 255]
+function clamp(v) { return v < 0 ? 0 : v > 255 ? 255 : v; }
+
 // ─── Global best-patch donor search ────────────────────────────────────────
 // Collects ~30-50 border samples from just outside the mask boundary,
 // then scans the entire image with adaptive stride to find the
@@ -49,7 +53,7 @@ function findDonor(srcData, dilatedData, width, height, minX, minY, mW, mH) {
     }
   }
 
-  if (borderSamples.length === 0) return { x: -1, y: -1 };
+  if (borderSamples.length === 0) return { x: -1, y: -1, borderSamples: [] };
 
   // ── 2. Coarse global scan ─────────────────────────────────────────────────
   var COARSE = Math.max(6, Math.round(Math.min(width, height) / 60));
@@ -88,7 +92,7 @@ function findDonor(srcData, dilatedData, width, height, minX, minY, mW, mH) {
     }
   }
 
-  if (bestX < 0) return { x: -1, y: -1 };
+  if (bestX < 0) return { x: -1, y: -1, borderSamples: borderSamples };
 
   // ── 3. Fine scan around the coarse winner ─────────────────────────────────
   var FINE = Math.max(1, Math.round(COARSE / 3));
@@ -103,7 +107,7 @@ function findDonor(srcData, dilatedData, width, height, minX, minY, mW, mH) {
     }
   }
 
-  return { x: bestX, y: bestY };
+  return { x: bestX, y: bestY, borderSamples: borderSamples };
 }
 
 self.addEventListener('message', function (e) {
@@ -148,44 +152,84 @@ self.addEventListener('message', function (e) {
     var finalRGB = srcRGB.clone(); // start as copy of original
 
     if (donor.x >= 0 && mW >= 3 && mH >= 3) {
-      // ── Seamless-clone path ──────────────────────────────────────────────
-      // Extract donor ROI
-      var donorMat = srcRGB.roi(new cv.Rect(donor.x, donor.y, mW, mH));
-      
-      // Mask for seamlessClone must have 0s on the 1-px border of src
-      var scMask = new cv.Mat(mH, mW, cv.CV_8UC1, new cv.Scalar(0));
-      cv.rectangle(scMask, new cv.Point(1, 1), new cv.Point(mW - 2, mH - 2), new cv.Scalar(255), -1);
+      // ── Direct clone-stamp path (no Poisson) ────────────────────────────
+      // 1. Build a full-image mat with donor pixels placed at mask position
+      var donorFull = srcRGB.clone();
+      var donorROI  = srcRGB.roi(new cv.Rect(donor.x, donor.y, mW, mH));
+      var dstROI    = donorFull.roi(new cv.Rect(minX, minY, mW, mH));
+      donorROI.copyTo(dstROI);
+      donorROI.delete(); dstROI.delete();
 
-      // Center of destination region (clamped so src fits inside dst)
-      var cpx = Math.max(Math.ceil(mW / 2), Math.min(width  - Math.ceil(mW / 2), Math.round((minX + maxX) / 2)));
-      var cpy = Math.max(Math.ceil(mH / 2), Math.min(height - Math.ceil(mH / 2), Math.round((minY + maxY) / 2)));
-
-      var cloned = new cv.Mat();
-      try {
-        // NORMAL_CLONE: paste donor texture exactly; Poisson solver handles the seam
-        cv.seamlessClone(donorMat, srcRGB, scMask, new cv.Point(cpx, cpy), cloned, cv.NORMAL_CLONE);
-        // Apply result only inside the user-painted mask; outside stays pristine
-        cloned.copyTo(finalRGB, dilated);
-      } catch (_) {
-        doInpaint(srcRGB, dilated, finalRGB);
+      // 2. Color-correct the donor region to match the border's mean color
+      //    (offsets per channel so brightness/tint doesn't jump)
+      var borderSamples = donor.borderSamples;
+      var tR = 0, tG = 0, tB = 0, dR = 0, dG = 0, dB = 0, cnt = 0;
+      for (var bsi = 0; bsi < borderSamples.length; bsi++) {
+        var bs = borderSamples[bsi];
+        tR += bs.r; tG += bs.g; tB += bs.b;
+        var bpx = donor.x + Math.max(0, Math.min(mW - 1, bs.ox));
+        var bpy = donor.y + Math.max(0, Math.min(mH - 1, bs.oy));
+        var bpi = (bpy * width + bpx) * 3;
+        dR += srcRGB.data[bpi]; dG += srcRGB.data[bpi+1]; dB += srcRGB.data[bpi+2];
+        cnt++;
       }
-      cloned.delete(); donorMat.delete(); scMask.delete();
+      var offR = cnt > 0 ? Math.round((tR - dR) / cnt) : 0;
+      var offG = cnt > 0 ? Math.round((tG - dG) / cnt) : 0;
+      var offB = cnt > 0 ? Math.round((tB - dB) / cnt) : 0;
+
+      // Apply offset only to the donor region in donorFull
+      var dfData = donorFull.data;
+      for (var ccy = minY; ccy < minY + mH; ccy++) {
+        for (var ccx = minX; ccx < minX + mW; ccx++) {
+          var ccpi = (ccy * width + ccx) * 3;
+          dfData[ccpi]   = clamp(dfData[ccpi]   + offR);
+          dfData[ccpi+1] = clamp(dfData[ccpi+1] + offG);
+          dfData[ccpi+2] = clamp(dfData[ccpi+2] + offB);
+        }
+      }
+
+      // 3. Feathered alpha blend: GaussianBlur the mask → soft alpha ramp
+      var featherW = Math.max(3, Math.min(25, Math.round(Math.min(mW, mH) * 0.12)));
+      var featherMask = new cv.Mat();
+      cv.GaussianBlur(dilated, featherMask, new cv.Size(0, 0), featherW);
+
+      // Per-pixel blend in JS: finalRGB = alpha*donorFull + (1-alpha)*srcRGB
+      var origData   = srcRGB.data;
+      var alphaData  = featherMask.data;
+      var resultData = finalRGB.data;
+      var totalPx    = width * height;
+      for (var ppi = 0; ppi < totalPx; ppi++) {
+        var alpha = alphaData[ppi];
+        if (alpha === 0) continue;
+        var base = ppi * 3;
+        var a = alpha / 255;
+        var ia = 1 - a;
+        resultData[base]   = clamp(Math.round(a * dfData[base]   + ia * origData[base]));
+        resultData[base+1] = clamp(Math.round(a * dfData[base+1] + ia * origData[base+1]));
+        resultData[base+2] = clamp(Math.round(a * dfData[base+2] + ia * origData[base+2]));
+      }
+
+      donorFull.delete(); featherMask.delete();
     } else {
+      // ── Inpaint fallback ─────────────────────────────────────────────────
       doInpaint(srcRGB, dilated, finalRGB);
     }
 
-    // === Sharpen only the inner core (eroded mask) — leave Poisson seam untouched ===
-    var erodeKs = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(9, 9));
+    // === Sharpen the inner core only (preserves feathered edges) ===
+    var erodeKs = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(11, 11));
     var innerMask = new cv.Mat();
     cv.erode(dilated, innerMask, erodeKs);
     erodeKs.delete();
-    var blurred = new cv.Mat();
-    cv.GaussianBlur(finalRGB, blurred, new cv.Size(0, 0), 1.0);
-    var sharpened = new cv.Mat();
-    cv.addWeighted(finalRGB, 1.35, blurred, -0.35, 0, sharpened);
-    blurred.delete();
-    sharpened.copyTo(finalRGB, innerMask);
-    sharpened.delete(); innerMask.delete();
+    if (cv.countNonZero(innerMask) > 0) {
+      var blurred = new cv.Mat();
+      cv.GaussianBlur(finalRGB, blurred, new cv.Size(0, 0), 0.8);
+      var sharpened = new cv.Mat();
+      cv.addWeighted(finalRGB, 1.3, blurred, -0.3, 0, sharpened);
+      blurred.delete();
+      sharpened.copyTo(finalRGB, innerMask);
+      sharpened.delete();
+    }
+    innerMask.delete();
 
     // === RGBA output ===
     var dstRGBA = new cv.Mat();
