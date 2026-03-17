@@ -287,6 +287,36 @@ router.post('/admin/stripe/seed-products', requireAdmin, requireFullAdmin, async
   }
 });
 
+// ─── Stripe Key Configuration ────────────────────────────
+router.post('/admin/stripe/configure-keys', requireAdmin, requireFullAdmin, async (req, res) => {
+  const { secretKey, publishableKey, webhookSecret } = req.body as {
+    secretKey?: string; publishableKey?: string; webhookSecret?: string;
+  };
+  const updated: string[] = [];
+  if (secretKey && secretKey.startsWith('sk_')) {
+    process.env.STRIPE_SECRET_KEY = secretKey;
+    updated.push('STRIPE_SECRET_KEY');
+  }
+  if (publishableKey && publishableKey.startsWith('pk_')) {
+    process.env.STRIPE_PUBLISHABLE_KEY = publishableKey;
+    updated.push('STRIPE_PUBLISHABLE_KEY');
+  }
+  if (webhookSecret && webhookSecret.startsWith('whsec_')) {
+    process.env.STRIPE_WEBHOOK_SECRET = webhookSecret;
+    updated.push('STRIPE_WEBHOOK_SECRET');
+  }
+  if (updated.length === 0) {
+    return res.status(400).json({ error: 'No valid keys provided. Secret keys start with sk_, publishable with pk_, webhook secret with whsec_' });
+  }
+  if (updated.includes('STRIPE_SECRET_KEY')) {
+    try {
+      const { resetStripeClients } = await import('../stripeClient');
+      resetStripeClients();
+    } catch {}
+  }
+  res.json({ updated, message: `Updated ${updated.join(', ')} for this session. Set as environment variables for permanence.` });
+});
+
 // ─── System / Settings ──────────────────────────────────
 router.get('/admin/system', requireAdmin, async (_req, res) => {
   try {

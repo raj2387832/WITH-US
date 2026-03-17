@@ -6,7 +6,7 @@ import {
   UserPlus, Activity, Clock, Trash2,
   CheckCircle2, XCircle, Server, Database, Zap,
   ArrowUpRight, Lock, DollarSign, BarChart3,
-  Copy, Package, Plug, Globe, Eye, EyeOff, Plus,
+  Copy, Package, Plug, Globe, Eye, EyeOff, Plus, Key,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -510,10 +510,11 @@ function UsersSection() {
 function TransactionsSection() {
   const [transactions, setTransactions] = useState<any[]>([]);
   const [breakdown, setBreakdown] = useState<any[]>([]);
-  const [typeFilter, setTypeFilter] = useState('all');
+  const [typeFilter, setTypeFilter] = useState('purchase');
   const [loading, setLoading] = useState(true);
+  const [initialLoad, setInitialLoad] = useState(true);
 
-  const load = useCallback(async (type = 'all') => {
+  const load = useCallback(async (type = 'purchase') => {
     setLoading(true);
     try {
       const d = await api(`/admin/transactions?limit=500${type !== 'all' ? `&type=${type}` : ''}`);
@@ -521,15 +522,16 @@ function TransactionsSection() {
       setBreakdown(d.breakdown ?? []);
     } catch {}
     setLoading(false);
+    setInitialLoad(false);
   }, []);
 
   useEffect(() => { load(typeFilter); }, [load, typeFilter]);
 
-  const types = ['all', ...breakdown.map(b => b.type)];
+  const types = initialLoad ? ['purchase'] : ['all', ...breakdown.map(b => b.type)];
 
   return (
     <div className="p-6 space-y-4 max-w-[1400px]">
-      <SectionHeader title="Transactions" subtitle={`${transactions.length} records`} onRefresh={() => load(typeFilter)} />
+      <SectionHeader title="Transactions" subtitle={`${transactions.length} ${typeFilter === 'purchase' ? 'purchases' : 'records'}`} onRefresh={() => load(typeFilter)} />
 
       <div className="grid lg:grid-cols-3 gap-4">
         <div className="bg-card border border-border/50 rounded-2xl p-5 lg:col-span-1">
@@ -626,6 +628,11 @@ function RevenueSection() {
   const [creating, setCreating] = useState(false);
   const [seeding, setSeeding] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [showKeyForm, setShowKeyForm] = useState(false);
+  const [keyForm, setKeyForm] = useState({ secretKey: '', publishableKey: '', webhookSecret: '' });
+  const [savingKeys, setSavingKeys] = useState(false);
+  const [showSecretKey, setShowSecretKey] = useState(false);
+  const [showWebhookSecret, setShowWebhookSecret] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -689,6 +696,22 @@ function RevenueSection() {
       load();
     } catch (e: any) { setMsg(e.message); }
     setSeeding(false);
+  };
+
+  const saveKeys = async () => {
+    setSavingKeys(true);
+    try {
+      const r = await api('/admin/stripe/configure-keys', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(keyForm),
+      });
+      setMsg(r.message);
+      setKeyForm({ secretKey: '', publishableKey: '', webhookSecret: '' });
+      setShowKeyForm(false);
+      load();
+    } catch (e: any) { setMsg(e.message); }
+    setSavingKeys(false);
   };
 
   const toggleProduct = async (productId: string, active: boolean) => {
@@ -807,19 +830,23 @@ function RevenueSection() {
         <div className="flex items-center justify-between flex-wrap gap-2">
           <h3 className="text-sm font-semibold flex items-center gap-2"><Package className="w-4 h-4" /> Stripe Products</h3>
           <div className="flex gap-2">
-            {!isDemo && stripe?.connected && (
+            {!isDemo && (
               <>
-                <Button size="sm" variant="outline" className="gap-1 text-xs" onClick={syncProducts} disabled={syncing}>
-                  <RefreshCw className={`w-3 h-3 ${syncing ? 'animate-spin' : ''}`} /> Sync
-                </Button>
-                {(stripe?.productCount ?? 0) === 0 && (
+                {stripe?.connected && (
+                  <Button size="sm" variant="outline" className="gap-1 text-xs" onClick={syncProducts} disabled={syncing}>
+                    <RefreshCw className={`w-3 h-3 ${syncing ? 'animate-spin' : ''}`} /> Sync
+                  </Button>
+                )}
+                {stripe?.connected && (stripe?.productCount ?? 0) === 0 && (
                   <Button size="sm" variant="outline" className="gap-1 text-xs" onClick={seedDefaults} disabled={seeding}>
                     <Zap className={`w-3 h-3 ${seeding ? 'animate-spin' : ''}`} /> Seed Defaults
                   </Button>
                 )}
-                <Button size="sm" className="gap-1 text-xs" onClick={() => setShowCreateProduct(true)}>
-                  <Plus className="w-3 h-3" /> New Product
-                </Button>
+                {stripe?.connected && (
+                  <Button size="sm" className="gap-1 text-xs" onClick={() => setShowCreateProduct(true)}>
+                    <Plus className="w-3 h-3" /> New Product
+                  </Button>
+                )}
               </>
             )}
           </div>
@@ -852,6 +879,9 @@ function RevenueSection() {
             <p className="text-sm text-muted-foreground">No products yet</p>
             {stripe?.connected && !isDemo && (
               <p className="text-xs text-muted-foreground">Click "Seed Defaults" to create starter packs, or "New Product" to create a custom one</p>
+            )}
+            {!stripe?.connected && (
+              <p className="text-xs text-muted-foreground">Connect Stripe below to manage pricing and credit packs</p>
             )}
           </div>
         )}
@@ -893,17 +923,73 @@ function RevenueSection() {
         </Modal>
       )}
 
-      {/* ── Not Connected Banner ───────────────────────────── */}
-      {!stripe?.connected && (
-        <div className="bg-orange-500/10 border border-orange-500/20 rounded-2xl p-6 text-center space-y-2">
-          <CreditCard className="w-10 h-10 text-orange-500 mx-auto" />
-          <p className="font-semibold text-orange-700">Stripe Not Connected</p>
-          <p className="text-sm text-muted-foreground">Add the Stripe integration or set <code className="bg-muted px-1 rounded">STRIPE_SECRET_KEY</code> to enable payments.</p>
-          <div className="flex justify-center gap-4 pt-2 text-xs text-muted-foreground">
-            <span>1. Connect Stripe integration</span>
-            <span>2. Seed default products</span>
-            <span>3. Configure webhook</span>
+      {/* ── API Key Configuration ─────────────────────────── */}
+      {!isDemo && (
+        <div className="bg-card border border-border/50 rounded-2xl p-5 space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-sm font-semibold flex items-center gap-2"><Key className="w-4 h-4" /> Stripe API Keys</h3>
+              <p className="text-xs text-muted-foreground mt-1">Enter your Stripe keys to connect payments</p>
+            </div>
+            {!showKeyForm && (
+              <Button size="sm" onClick={() => setShowKeyForm(true)} className="gap-1">
+                <Key className="w-3.5 h-3.5" /> Configure Keys
+              </Button>
+            )}
           </div>
+          {showKeyForm && (
+            <div className="space-y-3 max-w-lg">
+              <div>
+                <label className="text-xs font-medium mb-1 block">Secret Key (sk_test_... or sk_live_...) *</label>
+                <div className="relative">
+                  <input type={showSecretKey ? 'text' : 'password'} value={keyForm.secretKey}
+                    onChange={e => setKeyForm(f => ({ ...f, secretKey: e.target.value }))}
+                    placeholder="sk_test_..."
+                    className="w-full border border-border rounded-lg px-3 py-2 bg-background text-sm font-mono pr-10" />
+                  <button type="button" onClick={() => setShowSecretKey(!showSecretKey)}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
+                    {showSecretKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+              </div>
+              <div>
+                <label className="text-xs font-medium mb-1 block">Publishable Key (pk_test_... or pk_live_...)</label>
+                <input type="text" value={keyForm.publishableKey}
+                  onChange={e => setKeyForm(f => ({ ...f, publishableKey: e.target.value }))}
+                  placeholder="pk_test_..."
+                  className="w-full border border-border rounded-lg px-3 py-2 bg-background text-sm font-mono" />
+              </div>
+              <div>
+                <label className="text-xs font-medium mb-1 block">Webhook Secret (whsec_...)</label>
+                <div className="relative">
+                  <input type={showWebhookSecret ? 'text' : 'password'} value={keyForm.webhookSecret}
+                    onChange={e => setKeyForm(f => ({ ...f, webhookSecret: e.target.value }))}
+                    placeholder="whsec_..."
+                    className="w-full border border-border rounded-lg px-3 py-2 bg-background text-sm font-mono pr-10" />
+                  <button type="button" onClick={() => setShowWebhookSecret(!showWebhookSecret)}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
+                    {showWebhookSecret ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+              </div>
+              <div className="flex gap-2">
+                <Button variant="outline" onClick={() => { setShowKeyForm(false); setKeyForm({ secretKey: '', publishableKey: '', webhookSecret: '' }); }}>Cancel</Button>
+                <Button onClick={saveKeys} disabled={savingKeys || !keyForm.secretKey} className="gap-2">
+                  {savingKeys && <RefreshCw className="w-4 h-4 animate-spin" />} Save Keys
+                </Button>
+              </div>
+              <p className="text-[11px] text-muted-foreground">Keys are stored for this server session. Set as environment variables for permanence.</p>
+            </div>
+          )}
+          {!showKeyForm && !stripe?.connected && (
+            <div className="bg-orange-500/10 border border-orange-500/20 rounded-xl p-4 text-center space-y-2">
+              <p className="text-sm text-orange-700 font-medium">Stripe not connected</p>
+              <p className="text-xs text-muted-foreground">Click "Configure Keys" above to enter your Stripe API keys, or set them as environment variables.</p>
+            </div>
+          )}
+          {!showKeyForm && stripe?.connected && (
+            <p className="text-xs text-muted-foreground">Keys are configured. Click "Configure Keys" to update or rotate them.</p>
+          )}
         </div>
       )}
     </div>

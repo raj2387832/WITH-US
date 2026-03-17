@@ -107,6 +107,7 @@ artifacts-monorepo/
 - `GET /api/admin/transactions?type=` — filtered transaction list + breakdown
 - `GET /api/admin/revenue` — 30-day revenue chart data
 - `GET /api/admin/stripe/status` — Stripe connection, products, webhook URL
+- `POST /api/admin/stripe/configure-keys` — set Stripe API keys from admin UI (blocked for demo)
 - `POST /api/admin/stripe/test-connection` — test Stripe API key
 - `POST /api/admin/stripe/sync` — sync products from Stripe (blocked for demo)
 - `POST /api/admin/stripe/seed-products` — create 3 default credit packs (blocked for demo)
