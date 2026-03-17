@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import { useDropzone } from 'react-dropzone';
 import {
   UploadCloud, Paintbrush, Eraser, Trash2, Download,
@@ -53,6 +53,8 @@ export default function WatermarkRemover() {
   const isDrawingRef = useRef(false);
   const lastPosRef = useRef<{ x: number; y: number } | null>(null);
   const maskHasPixels = useRef(false);
+  // Holds the decoded HTMLImageElement waiting to be drawn once the canvases mount
+  const pendingImageRef = useRef<HTMLImageElement | null>(null);
 
   function getXY(e: React.MouseEvent | React.TouchEvent) {
     const canvas = maskCanvasRef.current!;
@@ -117,27 +119,40 @@ export default function WatermarkRemover() {
     e.preventDefault(); if (!isDrawingRef.current) return; paint(getXY(e).x, getXY(e).y);
   };
 
+  // Step 2: once imageFile state is set, the canvas elements mount and this
+  // effect fires — draw the pending image onto the freshly mounted canvases.
+  useEffect(() => {
+    if (!imageFile || !pendingImageRef.current) return;
+    const img = pendingImageRef.current;
+    pendingImageRef.current = null;
+    const ic = imageCanvasRef.current;
+    const mc = maskCanvasRef.current;
+    if (!ic || !mc) return;
+    ic.width = img.naturalWidth; ic.height = img.naturalHeight;
+    mc.width = img.naturalWidth; mc.height = img.naturalHeight;
+    ic.getContext('2d')!.drawImage(img, 0, 0);
+    mc.getContext('2d')!.clearRect(0, 0, mc.width, mc.height);
+    maskHasPixels.current = false;
+    setHasMask(false);
+    if (wrapperRef.current) {
+      const maxW = wrapperRef.current.clientWidth - 32;
+      setZoom(Math.min(1, maxW / img.naturalWidth));
+    }
+  }, [imageFile]);
+
+  // Step 1: decode the image, stash it in a ref, then flip imageFile state
+  // so React re-renders and mounts the canvases before we try to access them.
   const loadImage = useCallback((file: File) => {
     const url = URL.createObjectURL(file);
     const img = new Image();
     img.onload = () => {
-      const ic = imageCanvasRef.current!;
-      const mc = maskCanvasRef.current!;
-      ic.width = img.naturalWidth; ic.height = img.naturalHeight;
-      mc.width = img.naturalWidth; mc.height = img.naturalHeight;
-      ic.getContext('2d')!.drawImage(img, 0, 0);
-      mc.getContext('2d')!.clearRect(0, 0, mc.width, mc.height);
-      maskHasPixels.current = false;
-      setHasMask(false);
-      setResultUrl(null);
-      if (wrapperRef.current) {
-        const maxW = wrapperRef.current.clientWidth - 32;
-        setZoom(Math.min(1, maxW / img.naturalWidth));
-      }
+      pendingImageRef.current = img;
+      setImageFile(file);       // triggers re-render → canvases mount → effect above fires
+      setResultUrl(prev => { if (prev) URL.revokeObjectURL(prev); return null; });
       URL.revokeObjectURL(url);
     };
+    img.onerror = () => URL.revokeObjectURL(url);
     img.src = url;
-    setImageFile(file);
   }, []);
 
   const clearMask = () => {
