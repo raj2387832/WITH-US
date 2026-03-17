@@ -1,0 +1,90 @@
+Build Failed
+No Output Directory named "public" found after the Build completed. Configure the Output Directory in your Project Settings. Alternatively, configure vercel.json#outputDirectory.
+
+Created
+lefashionluvv-1528 Avatar
+lefashionluvv-1528
+59s ago
+Status
+Error
+Stale
+Duration
+31s
+Just now
+Environment
+Production
+Domains
+with-us-api-server-gs9c-h81mc560c-lefashionluvv-1528s-projects.vercel.app
+Source
+main
+96c5ef1
+Update deployment configuration to correctly locate built frontend files
+
+Deployment Settings
+3 Recommendations
+Build Logs
+31s
+122 lines
+Find in logs
+CtrlF
+21:32:55.460 
+21:32:56.032 
+computing gzip size...
+21:32:56.033 
+21:32:56.663 
+dist/public/index.html                                            48.67 kB │ gzip:    15.69 kB
+21:32:56.664 
+dist/public/assets/ort.bundle.min-OfoG_cy9.mjs                   399.90 kB
+21:32:56.665 
+dist/public/assets/ort.webgpu.bundle.min-CEayb2S6.mjs            399.92 kB
+21:32:56.665 
+dist/public/assets/ort-wasm-simd-threaded.jsep-D5Jk56-t.wasm  23,914.39 kB │ gzip: 5,662.56 kB
+21:32:56.665 
+dist/public/assets/index-BYCPk33k.css                            111.29 kB │ gzip:    17.83 kB
+21:32:56.665 
+dist/public/assets/index-DRXN-N-5.js                              82.00 kB │ gzip:    22.24 kB
+21:32:56.665 
+dist/public/assets/ort.bundle.min-DAXuwjBG.js                    395.51 kB │ gzip:   108.23 kB
+21:32:56.666 
+dist/public/assets/ort.webgpu.bundle.min-CElWvg4j.js             395.53 kB │ gzip:   108.23 kB
+21:32:56.666 
+dist/public/assets/index-DIpgG6Kb.js                           1,436.64 kB │ gzip:   383.83 kB
+21:32:56.666 
+✓ built in 11.25s
+21:32:56.666 
+21:32:56.667 
+21:32:56.667 
+(!) Some chunks are larger than 500 kB after minification. Consider:
+21:32:56.667 
+- Using dynamic import() to code-split the application
+21:32:56.667 
+- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+21:32:56.667 
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+21:32:56.668 
+21:32:57.151 
+Error: No Output Directory named "public" found after the Build completed. Configure the Output Directory in your Project Settings. Alternatively, configure vercel.json#outputDirectory.
+21:32:57.152 
+21:32:57.152 
+Learn More: https://vercel.link/missing-public-directory
+21:32:57.152 
+Deployment Summary
+Deployment Checks
+Assigning Custom Domains
+Runtime Logs
+
+View and debug runtime logs & errors
+
+Observability
+
+Monitor app health & performance
+
+Speed Insights
+
+Not Enabled
+Performance metrics from real users
+
+Web Analytics
+
+Not Enabled
+Analyze visitors & traffic in real-time
