@@ -44,19 +44,38 @@ self.addEventListener('message', function (e) {
     var width     = e.data.width;
     var height    = e.data.height;
     try {
-      var src = new cv.Mat(height, width, cv.CV_8UC4);
-      src.data.set(imageData);
+      // Build RGBA source mat
+      var srcRGBA = new cv.Mat(height, width, cv.CV_8UC4);
+      srcRGBA.data.set(imageData);
+
+      // cv.inpaint only accepts 1- or 3-channel images — convert RGBA → RGB
+      var srcRGB = new cv.Mat();
+      cv.cvtColor(srcRGBA, srcRGB, cv.COLOR_RGBA2RGB);
+
+      // Build binary mask from the painted layer's alpha channel
       var maskMat = new cv.Mat(height, width, cv.CV_8UC1);
       for (var i = 0; i < maskData.length; i += 4)
         maskMat.data[i / 4] = maskData[i + 3] > 10 ? 255 : 0;
+
+      // Dilate mask slightly so edges are fully covered
       var kernel  = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(5, 5));
       var dilated = new cv.Mat();
       cv.dilate(maskMat, dilated, kernel);
-      var dst = new cv.Mat();
-      cv.inpaint(src, dilated, dst, 5, cv.INPAINT_TELEA);
-      var result = new Uint8ClampedArray(dst.data.length);
-      result.set(dst.data);
-      src.delete(); maskMat.delete(); dilated.delete(); kernel.delete(); dst.delete();
+
+      // Run Telea inpainting on the 3-channel image
+      var dstRGB = new cv.Mat();
+      cv.inpaint(srcRGB, dilated, dstRGB, 5, cv.INPAINT_TELEA);
+
+      // Convert result back to RGBA so it matches canvas pixel format
+      var dstRGBA = new cv.Mat();
+      cv.cvtColor(dstRGB, dstRGBA, cv.COLOR_RGB2RGBA);
+
+      var result = new Uint8ClampedArray(dstRGBA.data.length);
+      result.set(dstRGBA.data);
+
+      srcRGBA.delete(); srcRGB.delete(); maskMat.delete();
+      dilated.delete(); kernel.delete(); dstRGB.delete(); dstRGBA.delete();
+
       postMessage({ type: 'result', data: result, width: width, height: height }, [result.buffer]);
     } catch (err) {
       postMessage({ type: 'error', message: String(err) });
