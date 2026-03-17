@@ -1,4 +1,4 @@
-import { Sparkles, Image as ImageIcon, RefreshCw, Download, Zap } from 'lucide-react';
+import { Sparkles, Image as ImageIcon, RefreshCw, Zap } from 'lucide-react';
 import { useBgRemover } from '@/hooks/use-bg-remover';
 import { ImageUploader } from '@/components/ImageUploader';
 import { ImageComparison } from '@/components/ImageComparison';
@@ -99,22 +99,6 @@ export default function Home() {
                   onDownload={downloadResult}
                   onReset={clearSelection}
                 />
-                <div className="mt-6 flex justify-center gap-4">
-                  <Button
-                    variant="outline"
-                    onClick={clearSelection}
-                    className="h-12 px-8 rounded-xl font-semibold"
-                  >
-                    Try Another Image
-                  </Button>
-                  <Button
-                    onClick={downloadResult}
-                    className="h-12 px-8 rounded-xl font-semibold bg-gradient-to-r from-primary to-violet-600 hover:shadow-lg hover:shadow-primary/25"
-                  >
-                    <Download className="w-5 h-5 mr-2" />
-                    Download PNG
-                  </Button>
-                </div>
               </motion.div>
             )}
           </AnimatePresence>

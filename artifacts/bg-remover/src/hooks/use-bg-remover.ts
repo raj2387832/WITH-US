@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback } from 'react';
 import { useToast } from '@/hooks/use-toast';
 
 export function useBgRemover() {
@@ -9,36 +9,39 @@ export function useBgRemover() {
   const [resultUrl, setResultUrl] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
 
-  useEffect(() => {
-    return () => {
-      if (originalUrl) URL.revokeObjectURL(originalUrl);
-      if (resultUrl) URL.revokeObjectURL(resultUrl);
-    };
-  }, [originalUrl, resultUrl]);
-
   const handleFileSelect = useCallback((file: File) => {
-    if (originalUrl) URL.revokeObjectURL(originalUrl);
-    if (resultUrl) URL.revokeObjectURL(resultUrl);
-    setResultUrl(null);
+    // Revoke old URLs using functional updates so we always have the latest value
+    setOriginalUrl(prev => {
+      if (prev) URL.revokeObjectURL(prev);
+      return URL.createObjectURL(file);
+    });
+    setResultUrl(prev => {
+      if (prev) URL.revokeObjectURL(prev);
+      return null;
+    });
     setOriginalFile(file);
-    setOriginalUrl(URL.createObjectURL(file));
-  }, [originalUrl, resultUrl]);
+  }, []);
 
   const clearSelection = useCallback(() => {
     setOriginalFile(null);
-    if (originalUrl) URL.revokeObjectURL(originalUrl);
-    if (resultUrl) URL.revokeObjectURL(resultUrl);
-    setOriginalUrl(null);
-    setResultUrl(null);
-  }, [originalUrl, resultUrl]);
+    setOriginalUrl(prev => {
+      if (prev) URL.revokeObjectURL(prev);
+      return null;
+    });
+    setResultUrl(prev => {
+      if (prev) URL.revokeObjectURL(prev);
+      return null;
+    });
+  }, []);
 
   const processImage = useCallback(async () => {
     if (!originalFile || isProcessing) return;
 
-    if (resultUrl) {
-      URL.revokeObjectURL(resultUrl);
-      setResultUrl(null);
-    }
+    // Clear old result without revoking the original
+    setResultUrl(prev => {
+      if (prev) URL.revokeObjectURL(prev);
+      return null;
+    });
 
     setIsProcessing(true);
 
@@ -72,7 +75,7 @@ export function useBgRemover() {
     } finally {
       setIsProcessing(false);
     }
-  }, [originalFile, isProcessing, resultUrl, toast]);
+  }, [originalFile, isProcessing, toast]);
 
   const downloadResult = useCallback(() => {
     if (!resultUrl) return;
