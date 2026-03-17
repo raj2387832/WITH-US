@@ -21,70 +21,86 @@ function notifyReady() { cvReady = true; postMessage({ type: 'ready' }); }
 if (typeof cv !== 'undefined' && cv.Mat) { notifyReady(); }
 else if (typeof cv !== 'undefined') { cv['onRuntimeInitialized'] = notifyReady; }
 
-// Find best donor patch: scan candidate regions near the mask,
-// score by border pixel similarity, return the best (or -1 if none fits).
+// ─── Global best-patch donor search ────────────────────────────────────────
+// Collects ~30-50 border samples from just outside the mask boundary,
+// then scans the entire image with adaptive stride to find the
+// region whose pixels best match those border samples (lowest SSD).
+// A coarse pass is followed by a fine pass around the best coarse candidate.
 function findDonor(srcData, dilatedData, width, height, minX, minY, mW, mH) {
-  var GAP = Math.max(4, Math.round(Math.min(mW, mH) * 0.15));
-  var candidates = [
-    { x: minX,           y: minY - mH - GAP },
-    { x: minX,           y: minY + mH + GAP },
-    { x: minX - mW - GAP, y: minY           },
-    { x: minX + mW + GAP, y: minY           },
-    { x: minX - mW - GAP, y: minY - mH - GAP },
-    { x: minX + mW + GAP, y: minY - mH - GAP },
-    { x: minX - mW - GAP, y: minY + mH + GAP },
-    { x: minX + mW + GAP, y: minY + mH + GAP },
-  ];
 
-  // Collect border pixels of the mask (unmasked neighbours of masked pixels)
+  // ── 1. Sample pixels just outside the mask boundary ──────────────────────
   var borderSamples = [];
-  var SAMPLE_STEP = Math.max(1, Math.round(Math.min(mW, mH) / 20));
-  for (var sy = minY; sy <= minY + mH; sy += SAMPLE_STEP) {
-    for (var sx = minX; sx <= minX + mW; sx += SAMPLE_STEP) {
-      if (sy < 0 || sy >= height || sx < 0 || sx >= width) continue;
-      if (dilatedData[sy * width + sx] === 0) continue; // not in mask
-      // look for a free neighbour
-      var nbx = -1, nby = -1;
-      var dirs = [[-1,0],[1,0],[0,-1],[0,1]];
-      for (var d = 0; d < 4; d++) {
-        var ty = sy + dirs[d][0], tx = sx + dirs[d][1];
-        if (ty < 0 || ty >= height || tx < 0 || tx >= width) continue;
-        if (dilatedData[ty * width + tx] === 0) { nbx = tx; nby = ty; break; }
+  var SAMPLE_STEP = Math.max(1, Math.round(Math.min(mW, mH) / 18));
+  var BORDER_RING  = Math.max(2, Math.round(Math.min(mW, mH) * 0.06)); // how far outside to sample
+
+  for (var sy = Math.max(0, minY - BORDER_RING); sy <= Math.min(height - 1, minY + mH + BORDER_RING); sy += SAMPLE_STEP) {
+    for (var sx = Math.max(0, minX - BORDER_RING); sx <= Math.min(width - 1, minX + mW + BORDER_RING); sx += SAMPLE_STEP) {
+      if (dilatedData[sy * width + sx] > 0) continue; // skip masked pixels
+      // Must be close to the mask edge
+      var nearMask = false;
+      for (var ny = Math.max(0, sy - BORDER_RING); ny <= Math.min(height - 1, sy + BORDER_RING) && !nearMask; ny++) {
+        for (var nx = Math.max(0, sx - BORDER_RING); nx <= Math.min(width - 1, sx + BORDER_RING) && !nearMask; nx++) {
+          if (dilatedData[ny * width + nx] > 0) nearMask = true;
+        }
       }
-      if (nbx >= 0) {
-        var ni = (nby * width + nbx) * 3;
-        borderSamples.push({ r: srcData[ni], g: srcData[ni+1], b: srcData[ni+2], ox: sx - minX, oy: sy - minY });
-      }
+      if (!nearMask) continue;
+      var ni = (sy * width + sx) * 3;
+      borderSamples.push({ r: srcData[ni], g: srcData[ni+1], b: srcData[ni+2], ox: sx - minX, oy: sy - minY });
     }
   }
 
-  var bestScore = Infinity, bestX = -1, bestY = -1;
+  if (borderSamples.length === 0) return { x: -1, y: -1 };
 
-  for (var ci = 0; ci < candidates.length; ci++) {
-    var c = candidates[ci];
-    var dx = Math.round(c.x), dy = Math.round(c.y);
-    if (dx < 0 || dy < 0 || dx + mW > width || dy + mH > height) continue;
+  // ── 2. Coarse global scan ─────────────────────────────────────────────────
+  var COARSE = Math.max(6, Math.round(Math.min(width, height) / 60));
 
-    // Reject if overlaps mask
-    var overlap = false;
-    outer: for (var iy = dy; iy < dy + mH; iy += SAMPLE_STEP) {
-      for (var ix = dx; ix < dx + mW; ix += SAMPLE_STEP) {
-        if (dilatedData[iy * width + ix] > 0) { overlap = true; break outer; }
-      }
-    }
-    if (overlap) continue;
-
-    // Score: SSD against border samples
-    var ssd = 0;
+  function scorePatch(dx, dy) {
+    var ssd = 0, n = 0;
     for (var si = 0; si < borderSamples.length; si++) {
       var s = borderSamples[si];
-      var px = dx + s.ox, py = dy + s.oy;
+      var px = dx + Math.max(0, Math.min(mW - 1, s.ox));
+      var py = dy + Math.max(0, Math.min(mH - 1, s.oy));
       if (px < 0 || px >= width || py < 0 || py >= height) continue;
       var pi = (py * width + px) * 3;
       var dr = srcData[pi] - s.r, dg = srcData[pi+1] - s.g, db = srcData[pi+2] - s.b;
       ssd += dr*dr + dg*dg + db*db;
+      n++;
     }
-    if (ssd < bestScore) { bestScore = ssd; bestX = dx; bestY = dy; }
+    return n > 0 ? ssd / n : Infinity;
+  }
+
+  function overlaps(dx, dy, stride) {
+    for (var iy = dy; iy < dy + mH; iy += stride) {
+      for (var ix = dx; ix < dx + mW; ix += stride) {
+        var cy2 = Math.min(iy, height - 1), cx2 = Math.min(ix, width - 1);
+        if (dilatedData[cy2 * width + cx2] > 0) return true;
+      }
+    }
+    return false;
+  }
+
+  var bestScore = Infinity, bestX = -1, bestY = -1;
+  for (var dy = 0; dy + mH <= height; dy += COARSE) {
+    for (var dx = 0; dx + mW <= width; dx += COARSE) {
+      if (overlaps(dx, dy, COARSE)) continue;
+      var s2 = scorePatch(dx, dy);
+      if (s2 < bestScore) { bestScore = s2; bestX = dx; bestY = dy; }
+    }
+  }
+
+  if (bestX < 0) return { x: -1, y: -1 };
+
+  // ── 3. Fine scan around the coarse winner ─────────────────────────────────
+  var FINE = Math.max(1, Math.round(COARSE / 3));
+  var fx0 = Math.max(0, bestX - COARSE), fx1 = Math.min(width  - mW, bestX + COARSE);
+  var fy0 = Math.max(0, bestY - COARSE), fy1 = Math.min(height - mH, bestY + COARSE);
+
+  for (var fy = fy0; fy <= fy1; fy += FINE) {
+    for (var fx = fx0; fx <= fx1; fx += FINE) {
+      if (overlaps(fx, fy, FINE)) continue;
+      var s3 = scorePatch(fx, fy);
+      if (s3 < bestScore) { bestScore = s3; bestX = fx; bestY = fy; }
+    }
   }
 
   return { x: bestX, y: bestY };
@@ -146,27 +162,30 @@ self.addEventListener('message', function (e) {
 
       var cloned = new cv.Mat();
       try {
-        cv.seamlessClone(donorMat, srcRGB, scMask, new cv.Point(cpx, cpy), cloned, cv.MIXED_CLONE);
-        // Copy only inside the user's mask (leave rest pristine)
+        // NORMAL_CLONE: paste donor texture exactly; Poisson solver handles the seam
+        cv.seamlessClone(donorMat, srcRGB, scMask, new cv.Point(cpx, cpy), cloned, cv.NORMAL_CLONE);
+        // Apply result only inside the user-painted mask; outside stays pristine
         cloned.copyTo(finalRGB, dilated);
       } catch (_) {
-        // Fall through to inpaint below
         doInpaint(srcRGB, dilated, finalRGB);
       }
       cloned.delete(); donorMat.delete(); scMask.delete();
     } else {
-      // ── Inpaint fallback (thin/text watermarks, or mask touches all edges) ─
       doInpaint(srcRGB, dilated, finalRGB);
     }
 
-    // === Light sharpen inside the mask ===
+    // === Sharpen only the inner core (eroded mask) — leave Poisson seam untouched ===
+    var erodeKs = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(9, 9));
+    var innerMask = new cv.Mat();
+    cv.erode(dilated, innerMask, erodeKs);
+    erodeKs.delete();
     var blurred = new cv.Mat();
     cv.GaussianBlur(finalRGB, blurred, new cv.Size(0, 0), 1.0);
     var sharpened = new cv.Mat();
-    cv.addWeighted(finalRGB, 1.4, blurred, -0.4, 0, sharpened);
+    cv.addWeighted(finalRGB, 1.35, blurred, -0.35, 0, sharpened);
     blurred.delete();
-    sharpened.copyTo(finalRGB, dilated);
-    sharpened.delete();
+    sharpened.copyTo(finalRGB, innerMask);
+    sharpened.delete(); innerMask.delete();
 
     // === RGBA output ===
     var dstRGBA = new cv.Mat();
