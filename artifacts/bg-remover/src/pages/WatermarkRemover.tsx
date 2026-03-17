@@ -69,10 +69,17 @@ export default function WatermarkRemover() {
     maskHasPixels.current = false;
     setHasMask(false);
 
-    if (wrapperRef.current) {
-      const maxW = wrapperRef.current.clientWidth - 32;
-      setZoom(Math.min(1, maxW / img.naturalWidth));
-    }
+    // Zoom is calculated after the editor section becomes visible (display:block)
+    // so we defer it one animation frame. Safety-clamp to >= 0.2 in case the
+    // element is still hidden and clientWidth is 0 or negative.
+    requestAnimationFrame(() => {
+      if (wrapperRef.current) {
+        const maxW = wrapperRef.current.clientWidth - 32;
+        setZoom(maxW > 0 ? Math.min(1, maxW / img.naturalWidth) : 1);
+      } else {
+        setZoom(1);
+      }
+    });
   }, []);
 
   // ─── ref callbacks ────────────────────────────────────────────────────────
