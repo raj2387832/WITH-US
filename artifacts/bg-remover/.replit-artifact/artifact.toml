@@ -1,0 +1,31 @@
+kind = "web"
+previewPath = "/"
+title = "Background Remover"
+version = "1.0.0"
+id = "artifacts/bg-remover"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+localPort = 25465
+name = "web"
+paths = ["/"]
+
+[services.development]
+run = "pnpm --filter @workspace/bg-remover run dev"
+
+[services.env]
+PORT = "25465"
+BASE_PATH = "/"
+
+[services.production]
+build = ["pnpm", "--filter", "@workspace/bg-remover", "run", "build"]
+publicDir = "artifacts/bg-remover/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"

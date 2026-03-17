@@ -2,7 +2,7 @@
 
 ## Overview
 
-pnpm workspace monorepo using TypeScript. Each package manages its own dependencies.
+Background Remover web app — upload an image, get the background removed using OpenCV GrabCut + edge detection (no AI, no API). A pnpm workspace monorepo using TypeScript for the frontend and Python Flask for image processing.
 
 ## Stack
 
@@ -10,8 +10,10 @@ pnpm workspace monorepo using TypeScript. Each package manages its own dependenc
 - **Node.js version**: 24
 - **Package manager**: pnpm
 - **TypeScript version**: 5.9
-- **API framework**: Express 5
-- **Database**: PostgreSQL + Drizzle ORM
+- **Frontend**: React + Vite (artifacts/bg-remover)
+- **API framework**: Express 5 (artifacts/api-server) — proxies `/api/remove-bg` to the Python server
+- **Python server**: Flask (artifacts/bg-python-server/app.py) — background removal engine
+- **Image processing**: OpenCV GrabCut + multi-scale Canny edge detection + CLAHE enhancement
 - **Validation**: Zod (`zod/v4`), `drizzle-zod`
 - **API codegen**: Orval (from OpenAPI spec)
 - **Build**: esbuild (CJS bundle)
@@ -20,20 +22,38 @@ pnpm workspace monorepo using TypeScript. Each package manages its own dependenc
 
 ```text
 artifacts-monorepo/
-├── artifacts/              # Deployable applications
-│   └── api-server/         # Express API server
+├── artifacts/
+│   ├── api-server/         # Express API server (proxies /api/remove-bg → Python)
+│   ├── bg-remover/         # React + Vite frontend (served at /)
+│   └── bg-python-server/   # Python Flask BG removal server (port 5001)
+│       └── app.py          # Core image processing logic
 ├── lib/                    # Shared libraries
 │   ├── api-spec/           # OpenAPI spec + Orval codegen config
 │   ├── api-client-react/   # Generated React Query hooks
 │   ├── api-zod/            # Generated Zod schemas from OpenAPI
 │   └── db/                 # Drizzle ORM schema + DB connection
-├── scripts/                # Utility scripts (single workspace package)
-│   └── src/                # Individual .ts scripts, run via `pnpm --filter @workspace/scripts run <script>`
-├── pnpm-workspace.yaml     # pnpm workspace (artifacts/*, lib/*, lib/integrations/*, scripts)
-├── tsconfig.base.json      # Shared TS options (composite, bundler resolution, es2022)
-├── tsconfig.json           # Root TS project references
-└── package.json            # Root package with hoisted devDeps
+├── scripts/                # Utility scripts
+├── pnpm-workspace.yaml
+├── tsconfig.base.json
+├── tsconfig.json
+└── package.json
 ```
+
+## Workflows
+
+- **artifacts/bg-remover: web** — Vite dev server for the React frontend
+- **artifacts/api-server: API Server** — Express server at /api, proxies /api/remove-bg to Python
+- **Python BG Server** — Flask server on port 5001, handles actual image processing
+
+## Background Removal Algorithm
+
+1. CLAHE contrast enhancement (LAB color space)
+2. Multi-scale Canny edge detection
+3. Border-based background color estimation
+4. Saliency-based foreground/background seeding
+5. OpenCV GrabCut (graph-cut based segmentation)
+6. Connected component cleanup (noise removal)
+7. Soft alpha feathering at edges
 
 ## TypeScript & Composite Projects
 
@@ -48,49 +68,12 @@ Every package extends `tsconfig.base.json` which sets `composite: true`. The roo
 - `pnpm run build` — runs `typecheck` first, then recursively runs `build` in all packages that define it
 - `pnpm run typecheck` — runs `tsc --build --emitDeclarationOnly` using project references
 
-## Packages
+## API
 
-### `artifacts/api-server` (`@workspace/api-server`)
+### `POST /api/remove-bg`
+- **Input**: multipart/form-data with `image` (file), `threshold` (int 1-100, default 15), `iterations` (int 1-20, default 5)
+- **Output**: PNG image with transparent background (RGBA)
+- Proxied through Express → Python Flask
 
-Express 5 API server. Routes live in `src/routes/` and use `@workspace/api-zod` for request and response validation and `@workspace/db` for persistence.
-
-- Entry: `src/index.ts` — reads `PORT`, starts Express
-- App setup: `src/app.ts` — mounts CORS, JSON/urlencoded parsing, routes at `/api`
-- Routes: `src/routes/index.ts` mounts sub-routers; `src/routes/health.ts` exposes `GET /health` (full path: `/api/health`)
-- Depends on: `@workspace/db`, `@workspace/api-zod`
-- `pnpm --filter @workspace/api-server run dev` — run the dev server
-- `pnpm --filter @workspace/api-server run build` — production esbuild bundle (`dist/index.cjs`)
-- Build bundles an allowlist of deps (express, cors, pg, drizzle-orm, zod, etc.) and externalizes the rest
-
-### `lib/db` (`@workspace/db`)
-
-Database layer using Drizzle ORM with PostgreSQL. Exports a Drizzle client instance and schema models.
-
-- `src/index.ts` — creates a `Pool` + Drizzle instance, exports schema
-- `src/schema/index.ts` — barrel re-export of all models
-- `src/schema/<modelname>.ts` — table definitions with `drizzle-zod` insert schemas (no models definitions exist right now)
-- `drizzle.config.ts` — Drizzle Kit config (requires `DATABASE_URL`, automatically provided by Replit)
-- Exports: `.` (pool, db, schema), `./schema` (schema only)
-
-Production migrations are handled by Replit when publishing. In development, we just use `pnpm --filter @workspace/db run push`, and we fallback to `pnpm --filter @workspace/db run push-force`.
-
-### `lib/api-spec` (`@workspace/api-spec`)
-
-Owns the OpenAPI 3.1 spec (`openapi.yaml`) and the Orval config (`orval.config.ts`). Running codegen produces output into two sibling packages:
-
-1. `lib/api-client-react/src/generated/` — React Query hooks + fetch client
-2. `lib/api-zod/src/generated/` — Zod schemas
-
-Run codegen: `pnpm --filter @workspace/api-spec run codegen`
-
-### `lib/api-zod` (`@workspace/api-zod`)
-
-Generated Zod schemas from the OpenAPI spec (e.g. `HealthCheckResponse`). Used by `api-server` for response validation.
-
-### `lib/api-client-react` (`@workspace/api-client-react`)
-
-Generated React Query hooks and fetch client from the OpenAPI spec (e.g. `useHealthCheck`, `healthCheck`).
-
-### `scripts` (`@workspace/scripts`)
-
-Utility scripts package. Each script is a `.ts` file in `src/` with a corresponding npm script in `package.json`. Run scripts via `pnpm --filter @workspace/scripts run <script>`. Scripts can import any workspace package (e.g., `@workspace/db`) by adding it as a dependency in `scripts/package.json`.
+### `GET /api/healthz`
+- Returns `{"status": "ok"}`

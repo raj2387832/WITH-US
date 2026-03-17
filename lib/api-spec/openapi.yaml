@@ -1,15 +1,16 @@
 openapi: 3.1.0
 info:
-  # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: Background Remover API
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: background-removal
+    description: Background removal operations
 paths:
   /healthz:
     get:
@@ -24,6 +25,57 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+  /remove-bg:
+    post:
+      operationId: removeBackground
+      tags: [background-removal]
+      summary: Remove image background
+      description: Upload an image and get back the image with background removed
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                image:
+                  type: string
+                  format: binary
+                  description: The image file to process
+                threshold:
+                  type: integer
+                  minimum: 1
+                  maximum: 100
+                  default: 15
+                  description: Edge sensitivity threshold (1-100)
+                iterations:
+                  type: integer
+                  minimum: 1
+                  maximum: 20
+                  default: 5
+                  description: GrabCut algorithm iterations
+              required:
+                - image
+      responses:
+        "200":
+          description: Processed image with background removed
+          content:
+            image/png:
+              schema:
+                type: string
+                format: binary
+        "400":
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Processing error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 components:
   schemas:
     HealthStatus:
@@ -33,4 +85,12 @@ components:
           type: string
       required:
         - status
-
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+        details:
+          type: string
+      required:
+        - error

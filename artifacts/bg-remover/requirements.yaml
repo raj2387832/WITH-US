@@ -1,0 +1,12 @@
+packages:
+  "framer-motion": "For smooth layout animations and state transitions"
+  "react-dropzone": "For robust drag-and-drop image upload functionality"
+  "lucide-react": "For beautiful, consistent iconography"
+  "clsx": "For conditional class name merging"
+  "tailwind-merge": "For safely merging Tailwind utility classes"
+
+images: []
+
+notes:
+  - "The backend returns a Blob representing the PNG image directly."
+  - "Need to handle ObjectURLs for previewing the uploaded file and the returned Blob."
