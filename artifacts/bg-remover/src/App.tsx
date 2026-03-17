@@ -4,6 +4,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import Home from "./pages/Home";
 import WatermarkRemover from "./pages/WatermarkRemover";
+import ImageEnhancer from "./pages/ImageEnhancer";
 import NotFound from "./pages/not-found";
 
 const queryClient = new QueryClient({
@@ -17,6 +18,7 @@ function Nav() {
   const tabs = [
     { href: "/", label: "Background Remover" },
     { href: "/watermark", label: "Watermark Remover" },
+    { href: "/enhance", label: "Image Enhancer" },
   ];
   return (
     <nav className="sticky top-0 z-50 bg-background/80 backdrop-blur border-b border-border/50">
@@ -50,6 +52,7 @@ function Router() {
       <Switch>
         <Route path="/" component={Home} />
         <Route path="/watermark" component={WatermarkRemover} />
+        <Route path="/enhance" component={ImageEnhancer} />
         <Route component={NotFound} />
       </Switch>
     </>
