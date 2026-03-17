@@ -160,36 +160,65 @@ self.addEventListener('message', function (e) {
       donorROI.copyTo(dstROI);
       donorROI.delete(); dstROI.delete();
 
-      // 2. Color-correct the donor region to match the border's mean color
-      //    (offsets per channel so brightness/tint doesn't jump)
+      // 2. Spatially-varying color correction
+      //    Compute per-edge offsets (target - donor) for top/bottom/left/right
+      //    then bilinearly interpolate across the patch so each pixel gets its
+      //    own correction — eliminates the visible rectangular colour boundary.
       var borderSamples = donor.borderSamples;
-      var tR = 0, tG = 0, tB = 0, dR = 0, dG = 0, dB = 0, cnt = 0;
-      for (var bsi = 0; bsi < borderSamples.length; bsi++) {
-        var bs = borderSamples[bsi];
-        tR += bs.r; tG += bs.g; tB += bs.b;
-        var bpx = donor.x + Math.max(0, Math.min(mW - 1, bs.ox));
-        var bpy = donor.y + Math.max(0, Math.min(mH - 1, bs.oy));
-        var bpi = (bpy * width + bpx) * 3;
-        dR += srcRGB.data[bpi]; dG += srcRGB.data[bpi+1]; dB += srcRGB.data[bpi+2];
-        cnt++;
-      }
-      var offR = cnt > 0 ? Math.round((tR - dR) / cnt) : 0;
-      var offG = cnt > 0 ? Math.round((tG - dG) / cnt) : 0;
-      var offB = cnt > 0 ? Math.round((tB - dB) / cnt) : 0;
-
-      // Apply offset only to the donor region in donorFull
       var dfData = donorFull.data;
+      var origRGB = srcRGB.data;
+
+      // Accumulators for 4 edges
+      var eR = [0,0,0,0], eG = [0,0,0,0], eB = [0,0,0,0], eN = [0,0,0,0];
+      var T15 = mH * 0.20, B15 = mH * 0.80;
+      var L15 = mW * 0.20, R15 = mW * 0.80;
+
+      for (var bsi2 = 0; bsi2 < borderSamples.length; bsi2++) {
+        var bs2 = borderSamples[bsi2];
+        var bpx2 = donor.x + Math.max(0, Math.min(mW - 1, bs2.ox));
+        var bpy2 = donor.y + Math.max(0, Math.min(mH - 1, bs2.oy));
+        var bpi2 = (bpy2 * width + bpx2) * 3;
+        var dr2 = bs2.r - origRGB[bpi2], dg2 = bs2.g - origRGB[bpi2+1], db2 = bs2.b - origRGB[bpi2+2];
+        // Each sample can contribute to multiple edges based on proximity
+        if (bs2.oy < T15)  { eR[0]+=dr2; eG[0]+=dg2; eB[0]+=db2; eN[0]++; } // top
+        if (bs2.oy >= B15) { eR[1]+=dr2; eG[1]+=dg2; eB[1]+=db2; eN[1]++; } // bottom
+        if (bs2.ox < L15)  { eR[2]+=dr2; eG[2]+=dg2; eB[2]+=db2; eN[2]++; } // left
+        if (bs2.ox >= R15) { eR[3]+=dr2; eG[3]+=dg2; eB[3]+=db2; eN[3]++; } // right
+      }
+      // Average each edge; missing edge falls back to global mean
+      var glob = [0,0,0], gn = 0;
+      for (var bsi3 = 0; bsi3 < borderSamples.length; bsi3++) {
+        var bs3 = borderSamples[bsi3];
+        var bpx3 = donor.x + Math.max(0, Math.min(mW - 1, bs3.ox));
+        var bpy3 = donor.y + Math.max(0, Math.min(mH - 1, bs3.oy));
+        var bpi3 = (bpy3 * width + bpx3) * 3;
+        glob[0] += bs3.r - origRGB[bpi3]; glob[1] += bs3.g - origRGB[bpi3+1]; glob[2] += bs3.b - origRGB[bpi3+2]; gn++;
+      }
+      var gR = gn > 0 ? glob[0]/gn : 0, gG = gn > 0 ? glob[1]/gn : 0, gB = gn > 0 ? glob[2]/gn : 0;
+      var topR = eN[0]>0 ? eR[0]/eN[0] : gR, topG = eN[0]>0 ? eG[0]/eN[0] : gG, topB = eN[0]>0 ? eB[0]/eN[0] : gB;
+      var botR = eN[1]>0 ? eR[1]/eN[1] : gR, botG = eN[1]>0 ? eG[1]/eN[1] : gG, botB = eN[1]>0 ? eB[1]/eN[1] : gB;
+      var lftR = eN[2]>0 ? eR[2]/eN[2] : gR, lftG = eN[2]>0 ? eG[2]/eN[2] : gG, lftB = eN[2]>0 ? eB[2]/eN[2] : gB;
+      var rgtR = eN[3]>0 ? eR[3]/eN[3] : gR, rgtG = eN[3]>0 ? eG[3]/eN[3] : gG, rgtB = eN[3]>0 ? eB[3]/eN[3] : gB;
+
+      // Apply spatially-varying correction via bilinear interpolation
+      var mW1 = Math.max(1, mW - 1), mH1 = Math.max(1, mH - 1);
       for (var ccy = minY; ccy < minY + mH; ccy++) {
+        var ry = (ccy - minY) / mH1; // 0=top 1=bottom
         for (var ccx = minX; ccx < minX + mW; ccx++) {
           var ccpi = (ccy * width + ccx) * 3;
-          dfData[ccpi]   = clamp(dfData[ccpi]   + offR);
-          dfData[ccpi+1] = clamp(dfData[ccpi+1] + offG);
-          dfData[ccpi+2] = clamp(dfData[ccpi+2] + offB);
+          var rx = (ccx - minX) / mW1; // 0=left 1=right
+          // Bilinear: average of vertical and horizontal interpolations
+          var crR = 0.5 * ((1-ry)*topR + ry*botR) + 0.5 * ((1-rx)*lftR + rx*rgtR);
+          var crG = 0.5 * ((1-ry)*topG + ry*botG) + 0.5 * ((1-rx)*lftG + rx*rgtG);
+          var crB = 0.5 * ((1-ry)*topB + ry*botB) + 0.5 * ((1-rx)*lftB + rx*rgtB);
+          dfData[ccpi]   = clamp(dfData[ccpi]   + Math.round(crR));
+          dfData[ccpi+1] = clamp(dfData[ccpi+1] + Math.round(crG));
+          dfData[ccpi+2] = clamp(dfData[ccpi+2] + Math.round(crB));
         }
       }
 
-      // 3. Feathered alpha blend: GaussianBlur the mask → soft alpha ramp
-      var featherW = Math.max(3, Math.min(25, Math.round(Math.min(mW, mH) * 0.12)));
+      // 3. Feathered alpha blend — wider sigma (22%) for a softer, less visible seam
+      var featherW = Math.max(5, Math.min(45, Math.round(Math.min(mW, mH) * 0.22)));
       var featherMask = new cv.Mat();
       cv.GaussianBlur(dilated, featherMask, new cv.Size(0, 0), featherW);
 
