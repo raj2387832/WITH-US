@@ -1,0 +1,6 @@
+{
+  "buildCommand": "pnpm --filter @workspace/bg-remover run build",
+  "outputDirectory": "artifacts/bg-remover/dist",
+  "installCommand": "pnpm install",
+  "framework": null
+}
