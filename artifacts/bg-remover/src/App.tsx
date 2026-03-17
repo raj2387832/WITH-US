@@ -88,7 +88,6 @@ function CreditsButton() {
 function Nav() {
   const [location] = useLocation();
   const { user, isAuthenticated, isLoading, login, logout } = useAuth();
-  const isAdmin = (user as any)?.isAdmin ?? false;
 
   const tabs = [
     { href: "/", label: "BG Remover" },
@@ -113,14 +112,12 @@ function Nav() {
               </Link>
             );
           })}
-          {isAdmin && (
-            <Link href="/admin"
-              className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors flex items-center gap-1 whitespace-nowrap ${
-                location.startsWith('/admin') ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground hover:bg-muted"
-              }`}>
-              <ShieldCheck className="w-3.5 h-3.5" /> Admin
-            </Link>
-          )}
+          <Link href="/admin"
+            className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors flex items-center gap-1 whitespace-nowrap ${
+              location.startsWith('/admin') ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground hover:bg-muted"
+            }`}>
+            <ShieldCheck className="w-3.5 h-3.5" /> Admin
+          </Link>
         </div>
         <div className="flex items-center gap-2 ml-2 shrink-0">
           <CreditsButton />

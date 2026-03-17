@@ -49,3 +49,10 @@ timeoutMs = 20000
 [nix]
 channel = "stable-25_05"
 packages = ["freetype", "lcms2", "libimagequant", "libjpeg", "libtiff", "libwebp", "libxcrypt", "openjpeg", "tcl", "tk", "zlib"]
+
+[userenv]
+
+[userenv.shared]
+ADMIN_USERNAME = "admin"
+ADMIN_PASSWORD = "admin123"
+ADMIN_COOKIE_SECRET = "img-tools-admin-secret-2024-change-in-prod"

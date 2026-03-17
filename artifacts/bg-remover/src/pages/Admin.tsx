@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import { motion } from 'framer-motion';
-import { Users, Activity, Coins, ShieldCheck, RefreshCw, Plus, Minus, TrendingUp } from 'lucide-react';
+import { Users, Activity, Coins, ShieldCheck, RefreshCw, Plus, Minus, TrendingUp, LogOut } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { useAuth } from '@workspace/replit-auth-web';
+import AdminLogin from './AdminLogin';
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, '');
 function apiUrl(path: string) { return `${BASE}/api${path}`; }
@@ -34,7 +34,8 @@ interface TxRow {
 }
 
 export default function Admin() {
-  const { user, isAuthenticated, isLoading } = useAuth();
+  const [authChecked, setAuthChecked] = useState(false);
+  const [isAdminAuth, setIsAdminAuth] = useState(false);
   const [stats, setStats] = useState<Stats | null>(null);
   const [users, setUsers] = useState<UserRow[]>([]);
   const [transactions, setTransactions] = useState<TxRow[]>([]);
@@ -45,10 +46,18 @@ export default function Admin() {
   const [actionMsg, setActionMsg] = useState<string | null>(null);
   const [loadingAction, setLoadingAction] = useState(false);
 
-  const isAdmin = (user as any)?.isAdmin ?? false;
+  const checkSession = useCallback(async () => {
+    try {
+      const res = await fetch(apiUrl('/admin/session'), { credentials: 'include' });
+      if (res.ok) {
+        const data = await res.json();
+        setIsAdminAuth(data.authenticated === true);
+      }
+    } catch {}
+    setAuthChecked(true);
+  }, []);
 
   const fetchData = useCallback(async () => {
-    if (!isAuthenticated) return;
     const [statsRes, usersRes, txRes] = await Promise.all([
       fetch(apiUrl('/admin/stats'), { credentials: 'include' }),
       fetch(apiUrl('/admin/users'), { credentials: 'include' }),
@@ -57,9 +66,18 @@ export default function Admin() {
     if (statsRes.ok) setStats(await statsRes.json());
     if (usersRes.ok) { const d = await usersRes.json(); setUsers(d.users ?? []); }
     if (txRes.ok) { const d = await txRes.json(); setTransactions(d.transactions ?? []); }
-  }, [isAuthenticated]);
+  }, []);
 
-  useEffect(() => { fetchData(); }, [fetchData]);
+  useEffect(() => { checkSession(); }, [checkSession]);
+  useEffect(() => { if (isAdminAuth) fetchData(); }, [isAdminAuth, fetchData]);
+
+  const handleLogout = async () => {
+    await fetch(apiUrl('/admin/logout-admin'), { method: 'POST', credentials: 'include' });
+    setIsAdminAuth(false);
+    setStats(null);
+    setUsers([]);
+    setTransactions([]);
+  };
 
   const grantCredits = async () => {
     if (!creditModal) return;
@@ -95,21 +113,19 @@ export default function Admin() {
     setLoadingAction(false);
   };
 
-  if (isLoading) return <div className="flex items-center justify-center min-h-screen text-muted-foreground">Loading…</div>;
-  if (!isAuthenticated) return (
-    <div className="flex flex-col items-center justify-center min-h-screen gap-4">
-      <ShieldCheck className="w-12 h-12 text-muted-foreground" />
-      <p className="text-lg font-semibold">Admin access required</p>
-      <p className="text-muted-foreground">You must be logged in as an admin.</p>
-    </div>
-  );
-  if (!isAdmin) return (
-    <div className="flex flex-col items-center justify-center min-h-screen gap-4">
-      <ShieldCheck className="w-12 h-12 text-destructive" />
-      <p className="text-lg font-semibold text-destructive">Access Denied</p>
-      <p className="text-muted-foreground">This area is restricted to administrators.</p>
-    </div>
-  );
+  // Still checking session
+  if (!authChecked) {
+    return (
+      <div className="flex items-center justify-center min-h-screen text-muted-foreground gap-2">
+        <RefreshCw className="w-5 h-5 animate-spin" /> Checking access…
+      </div>
+    );
+  }
+
+  // Not authenticated — show login form
+  if (!isAdminAuth) {
+    return <AdminLogin onSuccess={() => { setIsAdminAuth(true); }} />;
+  }
 
   return (
     <div className="min-h-screen pb-24">
@@ -121,9 +137,14 @@ export default function Admin() {
             </h1>
             <p className="text-muted-foreground mt-1">Manage users, credits, and platform settings.</p>
           </div>
-          <Button onClick={fetchData} variant="outline" className="gap-2">
-            <RefreshCw className="w-4 h-4" /> Refresh
-          </Button>
+          <div className="flex gap-2">
+            <Button onClick={fetchData} variant="outline" className="gap-2">
+              <RefreshCw className="w-4 h-4" /> Refresh
+            </Button>
+            <Button onClick={handleLogout} variant="ghost" className="gap-2 text-muted-foreground">
+              <LogOut className="w-4 h-4" /> Sign Out
+            </Button>
+          </div>
         </div>
       </header>
 
@@ -191,7 +212,7 @@ export default function Admin() {
 
         {tab === 'users' && (
           <div className="glass-panel rounded-2xl overflow-hidden">
-            <div className="p-4 border-b border-border/50 flex justify-between items-center">
+            <div className="p-4 border-b border-border/50">
               <h3 className="font-semibold">{users.length} Users</h3>
             </div>
             <div className="overflow-x-auto">
@@ -206,6 +227,9 @@ export default function Admin() {
                   </tr>
                 </thead>
                 <tbody>
+                  {users.length === 0 && (
+                    <tr><td colSpan={5} className="px-4 py-8 text-center text-muted-foreground">No users yet</td></tr>
+                  )}
                   {users.map(u => (
                     <tr key={u.id} className="border-b border-border/30 hover:bg-muted/20 transition-colors">
                       <td className="px-4 py-3">
@@ -267,6 +291,9 @@ export default function Admin() {
                   </tr>
                 </thead>
                 <tbody>
+                  {transactions.length === 0 && (
+                    <tr><td colSpan={5} className="px-4 py-8 text-center text-muted-foreground">No transactions yet</td></tr>
+                  )}
                   {transactions.map(tx => (
                     <tr key={tx.id} className="border-b border-border/30 hover:bg-muted/20 transition-colors">
                       <td className="px-4 py-3 text-muted-foreground text-xs font-mono">{tx.userId.slice(0, 12)}…</td>

@@ -1,11 +1,16 @@
 import { Router, type IRouter } from 'express';
 import { storage } from '../storage';
+import { isAdminTokenValid } from './admin-auth';
 
 const router: IRouter = Router();
 
 function requireAdmin(req: any, res: any, next: any) {
-  if (!req.isAuthenticated()) return res.status(401).json({ error: 'Unauthorized' });
-  if (!(req.user as any).isAdmin) return res.status(403).json({ error: 'Forbidden: admin only' });
+  // Accept either: Replit-auth user with isAdmin=true, OR valid admin cookie
+  const hasReplitAdmin = req.isAuthenticated?.() && (req.user as any)?.isAdmin;
+  const hasCookieAdmin = isAdminTokenValid(req);
+  if (!hasReplitAdmin && !hasCookieAdmin) {
+    return res.status(403).json({ error: 'Admin access required' });
+  }
   next();
 }
 
