@@ -2,7 +2,7 @@
 
 ## Overview
 
-Background Remover web app — upload an image, get the background removed using OpenCV GrabCut + edge detection (no AI, no API). A pnpm workspace monorepo using TypeScript for the frontend and Python Flask for image processing.
+Browser-native image processing web app with three tools: Background Remover, Watermark Remover, and Image Enhancer — all 100% in-browser, no paid APIs. Includes an auth system (Replit OIDC), a credits system (2 free/day + purchasable packs via Stripe), and an admin panel.
 
 ## Stack
 
@@ -10,70 +10,109 @@ Background Remover web app — upload an image, get the background removed using
 - **Node.js version**: 24
 - **Package manager**: pnpm
 - **TypeScript version**: 5.9
-- **Frontend**: React + Vite (artifacts/bg-remover)
-- **API framework**: Express 5 (artifacts/api-server) — proxies `/api/remove-bg` to the Python server
+- **Frontend**: React + Vite (artifacts/bg-remover) served at `/`
+- **API framework**: Express 5 (artifacts/api-server) at `/api`
 - **Python server**: Flask (artifacts/bg-python-server/app.py) — background removal engine
-- **Image processing**: OpenCV GrabCut + multi-scale Canny edge detection + CLAHE enhancement
-- **Validation**: Zod (`zod/v4`), `drizzle-zod`
-- **API codegen**: Orval (from OpenAPI spec)
-- **Build**: esbuild (CJS bundle)
+- **Database**: PostgreSQL via Drizzle ORM (`lib/db`)
+- **Auth**: Replit OIDC (openid-client) — session-based, cookie auth
+- **Payments**: Stripe (one-time payment, credit packs)
+- **Validation**: Zod, drizzle-zod
+- **API codegen**: Orval (from OpenAPI spec at lib/api-spec)
 
 ## Structure
 
 ```text
 artifacts-monorepo/
 ├── artifacts/
-│   ├── api-server/         # Express API server (proxies /api/remove-bg → Python)
-│   ├── bg-remover/         # React + Vite frontend (served at /)
+│   ├── api-server/         # Express API (auth, credits, admin, bg-removal proxy)
+│   ├── bg-remover/         # React + Vite frontend (BG, Watermark, Enhancer, Pricing, Admin)
 │   └── bg-python-server/   # Python Flask BG removal server (port 5001)
-│       └── app.py          # Core image processing logic
-├── lib/                    # Shared libraries
+├── lib/
 │   ├── api-spec/           # OpenAPI spec + Orval codegen config
-│   ├── api-client-react/   # Generated React Query hooks
-│   ├── api-zod/            # Generated Zod schemas from OpenAPI
-│   └── db/                 # Drizzle ORM schema + DB connection
-├── scripts/                # Utility scripts
+│   ├── api-client-react/   # Generated React Query hooks + customFetch
+│   ├── api-zod/            # Generated Zod schemas
+│   ├── db/                 # Drizzle schema: users, creditTransactions
+│   └── replit-auth-web/    # useAuth() hook for Replit OIDC in React
+├── scripts/
+│   ├── src/seed-products.ts  # Creates Stripe products/prices
+│   └── src/stripeClient.ts   # Stripe client for scripts
 ├── pnpm-workspace.yaml
 ├── tsconfig.base.json
-├── tsconfig.json
+├── tsconfig.json             # Root project references (db, api-client-react, api-zod, replit-auth-web)
 └── package.json
 ```
 
 ## Workflows
 
-- **artifacts/bg-remover: web** — Vite dev server for the React frontend
-- **artifacts/api-server: API Server** — Express server at /api, proxies /api/remove-bg to Python
-- **Python BG Server** — Flask server on port 5001, handles actual image processing
+- **artifacts/bg-remover: web** — Vite dev server for the React frontend (port 25465, path `/`)
+- **artifacts/api-server: API Server** — Express server at `/api` (port 8080)
+- **Python BG Server** — Flask server on port 5001
 
-## Background Removal Algorithm
+## Frontend Pages
+
+- `/` — Background Remover (in-browser, @imgly/background-removal + ONNX)
+- `/watermark` — Watermark Remover (canvas-based, OpenCV.js)
+- `/enhance` — Image Enhancer (pure-JS: bilateral denoise, CLAHE-like, Lanczos upscale)
+- `/pricing` — Credit packs pricing, daily free claim, Stripe checkout
+- `/admin` — Admin panel (users, stats, grant/deduct credits, toggle admin) — restricted to `isAdmin=true` users
+
+## Auth System
+
+- Replit OIDC via `openid-client` — session stored in server-side cookie (httpOnly)
+- `GET /api/login` — redirects to Replit OIDC
+- `GET /api/login/callback` — exchanges code, stores session
+- `GET /api/logout` — clears session
+- `GET /api/auth/user` — returns `{ user: AuthUser | null }`
+- `useAuth()` hook in `lib/replit-auth-web` wraps these for React
+
+## Credits System
+
+- Users table: `creditsBalance`, `lastDailyClaim`, `isAdmin`, `stripeCustomerId`
+- `creditTransactionsTable` — audit log of every credit change (type: daily/purchase/use/admin/refund)
+- `POST /api/credits/claim-daily` — gives 2 free credits if not already claimed today
+- `GET /api/credits/balance` — returns current balance + canClaimDaily flag
+- `POST /api/credits/checkout` — creates Stripe one-time payment checkout session
+- `GET /api/credits/products` — lists Stripe products with `credits` metadata
+- Stripe webhook at `POST /api/stripe/webhook` — credits added on `checkout.session.completed`
+
+## Admin API
+
+- `GET /api/admin/stats` — totals: users, credits in circulation, transactions, credits issued
+- `GET /api/admin/users` — all users
+- `GET /api/admin/transactions` — recent transactions
+- `POST /api/admin/users/:id/credits` — grant or deduct credits
+- `POST /api/admin/users/:id/toggle-admin` — flip isAdmin flag
+
+## Database Schema
+
+- `usersTable`: id (Replit userId), email, firstName, lastName, profileImageUrl, creditsBalance, lastDailyClaim, isAdmin, stripeCustomerId, createdAt, updatedAt
+- `creditTransactionsTable`: id, userId, amount, type, stripePaymentIntentId, description, createdAt
+
+## Stripe Setup
+
+1. Connect Stripe via Replit integrations (sets `STRIPE_SECRET_KEY`, `STRIPE_PUBLISHABLE_KEY`)
+2. Run `pnpm tsx scripts/src/seed-products.ts` to create credit pack products
+3. Configure Stripe webhook endpoint → `https://<domain>/api/stripe/webhook`, event: `checkout.session.completed`
+4. Set `STRIPE_WEBHOOK_SECRET` environment variable
+
+## TypeScript & Composite Projects
+
+Every package extends `tsconfig.base.json` with `composite: true`. Root `tsconfig.json` lists all composite lib packages as project references. Run `pnpm run typecheck` from the root for cross-package type checking.
+
+## Background Removal Algorithm (Python)
 
 1. CLAHE contrast enhancement (LAB color space)
 2. Multi-scale Canny edge detection
 3. Border-based background color estimation
 4. Saliency-based foreground/background seeding
 5. OpenCV GrabCut (graph-cut based segmentation)
-6. Connected component cleanup (noise removal)
+6. Connected component cleanup
 7. Soft alpha feathering at edges
 
-## TypeScript & Composite Projects
+## Critical Notes
 
-Every package extends `tsconfig.base.json` which sets `composite: true`. The root `tsconfig.json` lists all packages as project references. This means:
-
-- **Always typecheck from the root** — run `pnpm run typecheck` (which runs `tsc --build --emitDeclarationOnly`). This builds the full dependency graph so that cross-package imports resolve correctly. Running `tsc` inside a single package will fail if its dependencies haven't been built yet.
-- **`emitDeclarationOnly`** — we only emit `.d.ts` files during typecheck; actual JS bundling is handled by esbuild/tsx/vite...etc, not `tsc`.
-- **Project references** — when package A depends on package B, A's `tsconfig.json` must list B in its `references` array. `tsc --build` uses this to determine build order and skip up-to-date packages.
-
-## Root Scripts
-
-- `pnpm run build` — runs `typecheck` first, then recursively runs `build` in all packages that define it
-- `pnpm run typecheck` — runs `tsc --build --emitDeclarationOnly` using project references
-
-## API
-
-### `POST /api/remove-bg`
-- **Input**: multipart/form-data with `image` (file), `threshold` (int 1-100, default 15), `iterations` (int 1-20, default 5)
-- **Output**: PNG image with transparent background (RGBA)
-- Proxied through Express → Python Flask
-
-### `GET /api/healthz`
-- Returns `{"status": "ok"}`
+- Stripe webhook route must be registered BEFORE `express.json()` middleware (needs raw body)
+- Worker `onerror` must only call `e.preventDefault()` — never `reject()` (Vite error overlay)
+- Image Enhancer uses pure-JS worker (no CDN imports) — Replit proxy blocks `importScripts` in blob workers
+- API proxy routing: all `/api` traffic goes through shared Replit proxy → api-server port 8080
+- Do NOT add Vite proxy configs — the shared proxy handles cross-service routing automatically
