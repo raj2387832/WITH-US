@@ -9,7 +9,7 @@ const pythonTarget = `http://localhost:${PYTHON_PORT}`;
 const proxy = createProxyMiddleware({
   target: pythonTarget,
   changeOrigin: true,
-  pathRewrite: { "^/api/remove-bg": "/process" },
+  pathRewrite: { "^/remove-bg": "/process" },
   on: {
     error: (err: Error, _req: Request, res: Response) => {
       console.error("Proxy error:", err.message);
