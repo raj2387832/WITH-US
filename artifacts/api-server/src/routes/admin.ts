@@ -1,6 +1,6 @@
 import { Router, type IRouter } from 'express';
 import { storage } from '../storage';
-import { isAdminTokenValid } from './admin-auth';
+import { isAdminTokenValid, isDemoAdmin, getAdminRole } from './admin-auth';
 
 const router: IRouter = Router();
 
@@ -9,6 +9,13 @@ function requireAdmin(req: any, res: any, next: any) {
   const hasCookieAdmin = isAdminTokenValid(req);
   if (!hasReplitAdmin && !hasCookieAdmin) {
     return res.status(403).json({ error: 'Admin access required' });
+  }
+  next();
+}
+
+function requireFullAdmin(req: any, res: any, next: any) {
+  if (isDemoAdmin(req)) {
+    return res.status(403).json({ error: 'Demo admin cannot perform write operations' });
   }
   next();
 }
@@ -61,7 +68,7 @@ router.get('/admin/users/:id', requireAdmin, async (req, res) => {
   }
 });
 
-router.post('/admin/users/:id/credits', requireAdmin, async (req, res) => {
+router.post('/admin/users/:id/credits', requireAdmin, requireFullAdmin, async (req, res) => {
   const { id } = req.params;
   const { amount, description } = req.body as { amount: number; description?: string };
   if (typeof amount !== 'number') return res.status(400).json({ error: 'amount must be a number' });
@@ -78,7 +85,7 @@ router.post('/admin/users/:id/credits', requireAdmin, async (req, res) => {
   }
 });
 
-router.post('/admin/users/:id/toggle-admin', requireAdmin, async (req, res) => {
+router.post('/admin/users/:id/toggle-admin', requireAdmin, requireFullAdmin, async (req, res) => {
   const { id } = req.params;
   const user = await storage.getUser(id);
   if (!user) return res.status(404).json({ error: 'User not found' });
@@ -86,7 +93,7 @@ router.post('/admin/users/:id/toggle-admin', requireAdmin, async (req, res) => {
   res.json({ isAdmin: updated!.isAdmin });
 });
 
-router.post('/admin/users/:id/reset-credits', requireAdmin, async (req, res) => {
+router.post('/admin/users/:id/reset-credits', requireAdmin, requireFullAdmin, async (req, res) => {
   const { id } = req.params;
   try {
     const user = await storage.getUser(id);
@@ -99,7 +106,7 @@ router.post('/admin/users/:id/reset-credits', requireAdmin, async (req, res) => 
   }
 });
 
-router.delete('/admin/users/:id', requireAdmin, async (req, res) => {
+router.delete('/admin/users/:id', requireAdmin, requireFullAdmin, async (req, res) => {
   try {
     await storage.deleteUser(req.params.id);
     res.json({ deleted: true });
@@ -134,6 +141,8 @@ router.get('/admin/revenue', requireAdmin, async (_req, res) => {
 router.get('/admin/stripe/status', requireAdmin, async (_req, res) => {
   const hasKey = !!process.env.STRIPE_SECRET_KEY;
   const hasWebhookSecret = !!process.env.STRIPE_WEBHOOK_SECRET;
+  const domain = process.env.REPLIT_DOMAINS?.split(',')[0] ?? '';
+  const webhookUrl = domain ? `https://${domain}/api/stripe/webhook` : '';
   let products: any[] = [];
   try { products = await storage.getStripeProducts(); } catch {}
   res.json({
@@ -141,7 +150,141 @@ router.get('/admin/stripe/status', requireAdmin, async (_req, res) => {
     webhookConfigured: hasWebhookSecret,
     productCount: products.length,
     products,
+    webhookUrl,
+    publishableKey: process.env.STRIPE_PUBLISHABLE_KEY ? '****' + process.env.STRIPE_PUBLISHABLE_KEY.slice(-8) : null,
   });
+});
+
+router.post('/admin/stripe/test-connection', requireAdmin, async (_req, res) => {
+  if (!process.env.STRIPE_SECRET_KEY) {
+    return res.json({ success: false, error: 'STRIPE_SECRET_KEY not set' });
+  }
+  try {
+    const { getUncachableStripeClient } = await import('../stripeClient');
+    const stripe = await getUncachableStripeClient();
+    const account = await stripe.accounts.retrieve();
+    res.json({
+      success: true,
+      accountId: account.id,
+      businessName: (account as any).business_profile?.name ?? (account as any).settings?.dashboard?.display_name ?? account.id,
+      country: account.country,
+      chargesEnabled: account.charges_enabled,
+      payoutsEnabled: account.payouts_enabled,
+      livemode: (account as any).livemode ?? false,
+    });
+  } catch (err: any) {
+    res.json({ success: false, error: err.message });
+  }
+});
+
+router.post('/admin/stripe/sync', requireAdmin, requireFullAdmin, async (_req, res) => {
+  if (!process.env.STRIPE_SECRET_KEY) {
+    return res.status(400).json({ error: 'Stripe not connected' });
+  }
+  try {
+    const { getStripeSync } = await import('../stripeClient');
+    const stripeSync = await getStripeSync();
+    await stripeSync.syncBackfill();
+    const products = await storage.getStripeProducts();
+    res.json({ synced: true, productCount: products.length });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/admin/stripe/create-product', requireAdmin, requireFullAdmin, async (req, res) => {
+  if (!process.env.STRIPE_SECRET_KEY) {
+    return res.status(400).json({ error: 'Stripe not connected' });
+  }
+  const { name, description, credits, priceUSD } = req.body as {
+    name: string; description?: string; credits: number; priceUSD: number;
+  };
+  if (!name || !credits || !priceUSD) {
+    return res.status(400).json({ error: 'name, credits, and priceUSD are required' });
+  }
+  try {
+    const { getUncachableStripeClient, getStripeSync } = await import('../stripeClient');
+    const stripe = await getUncachableStripeClient();
+    const product = await stripe.products.create({
+      name,
+      description: description ?? undefined,
+      metadata: { credits: String(credits) },
+    });
+    const price = await stripe.prices.create({
+      product: product.id,
+      unit_amount: Math.round(priceUSD * 100),
+      currency: 'usd',
+    });
+    try {
+      const stripeSync = await getStripeSync();
+      await stripeSync.syncBackfill();
+    } catch {}
+    res.json({
+      productId: product.id,
+      priceId: price.id,
+      name: product.name,
+      credits,
+      priceUSD,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/admin/stripe/toggle-product/:productId', requireAdmin, requireFullAdmin, async (req, res) => {
+  if (!process.env.STRIPE_SECRET_KEY) {
+    return res.status(400).json({ error: 'Stripe not connected' });
+  }
+  const { productId } = req.params;
+  const { active } = req.body as { active: boolean };
+  try {
+    const { getUncachableStripeClient, getStripeSync } = await import('../stripeClient');
+    const stripe = await getUncachableStripeClient();
+    const product = await stripe.products.update(productId, { active });
+    try {
+      const stripeSync = await getStripeSync();
+      await stripeSync.syncBackfill();
+    } catch {}
+    res.json({ id: product.id, active: product.active });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/admin/stripe/seed-products', requireAdmin, requireFullAdmin, async (_req, res) => {
+  if (!process.env.STRIPE_SECRET_KEY) {
+    return res.status(400).json({ error: 'Stripe not connected' });
+  }
+  const PACKS = [
+    { name: 'Starter Pack', description: 'Perfect for occasional use', credits: 10, amountUSD: 199 },
+    { name: 'Pro Pack', description: 'Best value for regular users', credits: 50, amountUSD: 799 },
+    { name: 'Power Pack', description: 'For heavy usage and teams', credits: 200, amountUSD: 2499 },
+  ];
+  try {
+    const { getUncachableStripeClient, getStripeSync } = await import('../stripeClient');
+    const stripe = await getUncachableStripeClient();
+    const created: any[] = [];
+    for (const pack of PACKS) {
+      const product = await stripe.products.create({
+        name: pack.name,
+        description: pack.description,
+        metadata: { credits: String(pack.credits) },
+      });
+      const price = await stripe.prices.create({
+        product: product.id,
+        unit_amount: pack.amountUSD,
+        currency: 'usd',
+      });
+      created.push({ productId: product.id, priceId: price.id, name: pack.name, credits: pack.credits, price: pack.amountUSD });
+    }
+    try {
+      const stripeSync = await getStripeSync();
+      await stripeSync.syncBackfill();
+    } catch {}
+    res.json({ created });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ─── System / Settings ──────────────────────────────────
@@ -176,7 +319,7 @@ router.get('/admin/system', requireAdmin, async (_req, res) => {
   }
 });
 
-router.post('/admin/settings/credentials', requireAdmin, async (req, res) => {
+router.post('/admin/settings/credentials', requireAdmin, requireFullAdmin, async (req, res) => {
   const { currentPassword, newPassword, newUsername } = req.body as { currentPassword: string; newPassword?: string; newUsername?: string };
   const currentAdminPassword = process.env.ADMIN_PASSWORD ?? 'admin123';
   if (currentPassword !== currentAdminPassword) {

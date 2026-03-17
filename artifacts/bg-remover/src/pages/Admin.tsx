@@ -1,11 +1,12 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, createContext, useContext } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   LayoutDashboard, Users, ArrowLeftRight, CreditCard, Settings, ShieldCheck,
   RefreshCw, LogOut, Search, ChevronRight, ChevronLeft, Coins, TrendingUp,
-  TrendingDown, UserPlus, Activity, Clock, Eye, Trash2, RotateCcw,
-  Plus, Minus, CheckCircle2, XCircle, Server, Database, Zap, Download,
-  ArrowUpRight, ArrowDownRight, Lock, User as UserIcon, DollarSign, BarChart3,
+  UserPlus, Activity, Clock, Trash2,
+  CheckCircle2, XCircle, Server, Database, Zap,
+  ArrowUpRight, Lock, DollarSign, BarChart3,
+  Copy, Package, Plug, Globe, Eye, EyeOff, Plus,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -38,18 +39,13 @@ function formatUptime(s: number) {
 
 type Section = 'dashboard' | 'users' | 'transactions' | 'revenue' | 'settings';
 
-interface StatCard {
-  label: string;
-  value: number | string;
-  icon: any;
-  color: string;
-  change?: string;
-  changeDir?: 'up' | 'down' | 'neutral';
-}
+const DemoContext = createContext(false);
+function useIsDemo() { return useContext(DemoContext); }
 
 export default function Admin() {
   const [authChecked, setAuthChecked] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [role, setRole] = useState<'admin' | 'demo' | null>(null);
   const [section, setSection] = useState<Section>('dashboard');
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
@@ -57,6 +53,7 @@ export default function Admin() {
     try {
       const data = await api('/admin/session');
       setIsAdmin(data.authenticated === true);
+      setRole(data.role ?? null);
     } catch {}
     setAuthChecked(true);
   }, []);
@@ -66,10 +63,18 @@ export default function Admin() {
   const handleLogout = async () => {
     await api('/admin/logout-admin', { method: 'POST' });
     setIsAdmin(false);
+    setRole(null);
+  };
+
+  const handleLoginSuccess = (loginRole?: string) => {
+    setIsAdmin(true);
+    setRole((loginRole as 'admin' | 'demo') ?? 'admin');
   };
 
   if (!authChecked) return <div className="flex items-center justify-center min-h-screen text-muted-foreground gap-2"><RefreshCw className="w-5 h-5 animate-spin" /> Loading…</div>;
-  if (!isAdmin) return <AdminLogin onSuccess={() => setIsAdmin(true)} />;
+  if (!isAdmin) return <AdminLogin onSuccess={handleLoginSuccess} />;
+
+  const isDemo = role === 'demo';
 
   const navItems: { id: Section; label: string; icon: any }[] = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -80,57 +85,68 @@ export default function Admin() {
   ];
 
   return (
-    <div className="flex min-h-screen bg-background">
-      {/* Sidebar */}
-      <motion.aside
-        initial={false}
-        animate={{ width: sidebarOpen ? 240 : 64 }}
-        className="border-r border-border/50 bg-muted/20 flex flex-col shrink-0 sticky top-0 h-screen z-30"
-      >
-        <div className="p-4 flex items-center gap-2 border-b border-border/50 h-14">
-          <ShieldCheck className="w-6 h-6 text-primary shrink-0" />
-          {sidebarOpen && <span className="font-bold text-sm truncate">Admin Panel</span>}
-        </div>
-        <nav className="flex-1 py-2 space-y-0.5 px-2">
-          {navItems.map(n => (
-            <button key={n.id} onClick={() => setSection(n.id)}
-              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${
-                section === n.id
-                  ? 'bg-primary text-primary-foreground shadow-sm'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'
-              }`}>
-              <n.icon className="w-4.5 h-4.5 shrink-0" />
-              {sidebarOpen && <span className="truncate">{n.label}</span>}
+    <DemoContext.Provider value={isDemo}>
+      <div className="flex min-h-screen bg-background">
+        <motion.aside
+          initial={false}
+          animate={{ width: sidebarOpen ? 240 : 64 }}
+          className="border-r border-border/50 bg-muted/20 flex flex-col shrink-0 sticky top-0 h-screen z-30"
+        >
+          <div className="p-4 flex items-center gap-2 border-b border-border/50 h-14">
+            <ShieldCheck className="w-6 h-6 text-primary shrink-0" />
+            {sidebarOpen && (
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="font-bold text-sm truncate">Admin Panel</span>
+                {isDemo && <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-500/20 text-amber-600 shrink-0">DEMO</span>}
+              </div>
+            )}
+          </div>
+          <nav className="flex-1 py-2 space-y-0.5 px-2">
+            {navItems.map(n => (
+              <button key={n.id} onClick={() => setSection(n.id)}
+                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${
+                  section === n.id
+                    ? 'bg-primary text-primary-foreground shadow-sm'
+                    : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'
+                }`}>
+                <n.icon className="w-4.5 h-4.5 shrink-0" />
+                {sidebarOpen && <span className="truncate">{n.label}</span>}
+              </button>
+            ))}
+          </nav>
+          <div className="p-2 border-t border-border/50 space-y-1">
+            <button onClick={() => setSidebarOpen(o => !o)}
+              className="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors">
+              {sidebarOpen ? <ChevronLeft className="w-4 h-4 shrink-0" /> : <ChevronRight className="w-4 h-4 shrink-0" />}
+              {sidebarOpen && 'Collapse'}
             </button>
-          ))}
-        </nav>
-        <div className="p-2 border-t border-border/50 space-y-1">
-          <button onClick={() => setSidebarOpen(o => !o)}
-            className="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors">
-            {sidebarOpen ? <ChevronLeft className="w-4 h-4 shrink-0" /> : <ChevronRight className="w-4 h-4 shrink-0" />}
-            {sidebarOpen && 'Collapse'}
-          </button>
-          <button onClick={handleLogout}
-            className="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-xs text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors">
-            <LogOut className="w-4 h-4 shrink-0" />
-            {sidebarOpen && 'Sign Out'}
-          </button>
-        </div>
-      </motion.aside>
+            <button onClick={handleLogout}
+              className="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-xs text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors">
+              <LogOut className="w-4 h-4 shrink-0" />
+              {sidebarOpen && 'Sign Out'}
+            </button>
+          </div>
+        </motion.aside>
 
-      {/* Main Content */}
-      <main className="flex-1 overflow-y-auto">
-        <AnimatePresence mode="wait">
-          <motion.div key={section} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.15 }}>
-            {section === 'dashboard' && <DashboardSection />}
-            {section === 'users' && <UsersSection />}
-            {section === 'transactions' && <TransactionsSection />}
-            {section === 'revenue' && <RevenueSection />}
-            {section === 'settings' && <SettingsSection />}
-          </motion.div>
-        </AnimatePresence>
-      </main>
-    </div>
+        <main className="flex-1 overflow-y-auto">
+          {isDemo && (
+            <div className="bg-amber-500/10 border-b border-amber-500/20 px-6 py-2.5 flex items-center gap-2">
+              <Eye className="w-4 h-4 text-amber-600" />
+              <span className="text-sm text-amber-700 font-medium">Demo Mode — View only. Write operations are disabled.</span>
+            </div>
+          )}
+          <AnimatePresence mode="wait">
+            <motion.div key={section} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.15 }}>
+              {section === 'dashboard' && <DashboardSection />}
+              {section === 'users' && <UsersSection />}
+              {section === 'transactions' && <TransactionsSection />}
+              {section === 'revenue' && <RevenueSection />}
+              {section === 'settings' && <SettingsSection />}
+            </motion.div>
+          </AnimatePresence>
+        </main>
+      </div>
+    </DemoContext.Provider>
   );
 }
 
@@ -157,7 +173,7 @@ function DashboardSection() {
   if (loading) return <LoadingPane />;
   if (!data) return <ErrorPane onRetry={load} />;
 
-  const cards: StatCard[] = [
+  const cards = [
     { label: 'Total Users', value: data.totalUsers, icon: Users, color: 'text-blue-500', change: `+${data.newUsersToday} today`, changeDir: data.newUsersToday > 0 ? 'up' : 'neutral' },
     { label: 'Credits Circulating', value: data.totalCreditsInCirculation, icon: Coins, color: 'text-yellow-500' },
     { label: 'Total Transactions', value: data.totalTransactions, icon: Activity, color: 'text-green-500', change: `+${data.transactionsToday} today`, changeDir: data.transactionsToday > 0 ? 'up' : 'neutral' },
@@ -171,9 +187,8 @@ function DashboardSection() {
   return (
     <div className="p-6 space-y-6 max-w-[1400px]">
       <SectionHeader title="Dashboard" subtitle="Platform overview and key metrics" onRefresh={load} />
-
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        {cards.map((c, i) => (
+        {cards.map((c: any, i: number) => (
           <motion.div key={c.label} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.03 }}
             className="bg-card border border-border/50 rounded-2xl p-4 hover:shadow-md transition-shadow">
             <div className="flex items-center justify-between mb-2">
@@ -182,10 +197,8 @@ function DashboardSection() {
             </div>
             <p className="text-2xl font-extrabold">{typeof c.value === 'number' ? c.value.toLocaleString() : c.value}</p>
             {c.change && (
-              <div className={`flex items-center gap-1 mt-1 text-xs font-medium ${
-                c.changeDir === 'up' ? 'text-green-600' : c.changeDir === 'down' ? 'text-red-500' : 'text-muted-foreground'
-              }`}>
-                {c.changeDir === 'up' ? <ArrowUpRight className="w-3 h-3" /> : c.changeDir === 'down' ? <ArrowDownRight className="w-3 h-3" /> : null}
+              <div className={`flex items-center gap-1 mt-1 text-xs font-medium ${c.changeDir === 'up' ? 'text-green-600' : 'text-muted-foreground'}`}>
+                {c.changeDir === 'up' && <ArrowUpRight className="w-3 h-3" />}
                 {c.change}
               </div>
             )}
@@ -193,7 +206,6 @@ function DashboardSection() {
         ))}
       </div>
 
-      {/* Trends Chart */}
       {trends.length > 0 && (
         <div className="bg-card border border-border/50 rounded-2xl p-5">
           <h3 className="text-sm font-semibold mb-4">14-Day Trends</h3>
@@ -223,7 +235,6 @@ function DashboardSection() {
       )}
 
       <div className="grid lg:grid-cols-2 gap-6">
-        {/* Recent Activity */}
         <div className="bg-card border border-border/50 rounded-2xl p-5">
           <h3 className="text-sm font-semibold mb-3">Recent Activity</h3>
           <div className="space-y-2 max-h-[320px] overflow-y-auto">
@@ -245,15 +256,12 @@ function DashboardSection() {
           </div>
         </div>
 
-        {/* Top Users */}
         <div className="bg-card border border-border/50 rounded-2xl p-5">
           <h3 className="text-sm font-semibold mb-3">Top Users by Credits</h3>
           <div className="space-y-2">
             {(data.topUsers ?? []).map((u: any, i: number) => (
               <div key={u.id} className="flex items-center gap-3 p-2 rounded-xl hover:bg-muted/30 transition-colors">
-                <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center text-primary text-xs font-bold">
-                  #{i + 1}
-                </div>
+                <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center text-primary text-xs font-bold">#{i + 1}</div>
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium truncate">{[u.first_name, u.last_name].filter(Boolean).join(' ') || u.email || 'Anonymous'}</p>
                   <p className="text-xs text-muted-foreground truncate">{u.email ?? u.id.slice(0, 16)}</p>
@@ -273,6 +281,7 @@ function DashboardSection() {
    USERS
    ═══════════════════════════════════════════════════════════ */
 function UsersSection() {
+  const isDemo = useIsDemo();
   const [users, setUsers] = useState<any[]>([]);
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
@@ -327,7 +336,7 @@ function UsersSection() {
       setMsg('Admin status toggled');
       load(search);
       if (selectedUser?.id === id) loadUser(id);
-    } catch {}
+    } catch (e: any) { setMsg(e.message); }
     setActionLoading(false);
   };
 
@@ -346,7 +355,6 @@ function UsersSection() {
       <SectionHeader title="User Management" subtitle={`${users.length} total users`} onRefresh={() => load(search)} />
       {msg && <AlertBar message={msg} onDismiss={() => setMsg(null)} />}
 
-      {/* Search */}
       <div className="flex gap-2">
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
@@ -359,7 +367,6 @@ function UsersSection() {
       </div>
 
       <div className="flex gap-6">
-        {/* User Table */}
         <div className={`bg-card border border-border/50 rounded-2xl overflow-hidden ${selectedUser ? 'flex-1' : 'w-full'}`}>
           {loading ? <div className="p-8 text-center text-muted-foreground"><RefreshCw className="w-5 h-5 animate-spin inline" /> Loading…</div> : (
             <div className="overflow-x-auto">
@@ -370,11 +377,11 @@ function UsersSection() {
                     <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground">Credits</th>
                     <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground">Role</th>
                     <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground">Joined</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground">Actions</th>
+                    {!isDemo && <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground">Actions</th>}
                   </tr>
                 </thead>
                 <tbody>
-                  {users.length === 0 && <tr><td colSpan={5} className="px-4 py-12 text-center text-muted-foreground">No users found</td></tr>}
+                  {users.length === 0 && <tr><td colSpan={isDemo ? 4 : 5} className="px-4 py-12 text-center text-muted-foreground">No users found</td></tr>}
                   {users.map(u => (
                     <tr key={u.id} className={`border-b border-border/30 hover:bg-muted/20 cursor-pointer transition-colors ${selectedUser?.id === u.id ? 'bg-primary/5' : ''}`}
                       onClick={() => loadUser(u.id)}>
@@ -389,19 +396,21 @@ function UsersSection() {
                         </span>
                       </td>
                       <td className="px-4 py-3 text-xs text-muted-foreground">{formatDate(u.createdAt)}</td>
-                      <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
-                        <div className="flex gap-1">
-                          <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => { setCreditModal(u); setCreditAmt('10'); setCreditDesc('Admin grant'); }}>
-                            <Coins className="w-3.5 h-3.5" />
-                          </Button>
-                          <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => toggleAdmin(u.id)} disabled={actionLoading}>
-                            <ShieldCheck className="w-3.5 h-3.5" />
-                          </Button>
-                          <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-destructive hover:text-destructive" onClick={() => deleteUser(u.id)}>
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </Button>
-                        </div>
-                      </td>
+                      {!isDemo && (
+                        <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
+                          <div className="flex gap-1">
+                            <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => { setCreditModal(u); setCreditAmt('10'); setCreditDesc('Admin grant'); }}>
+                              <Coins className="w-3.5 h-3.5" />
+                            </Button>
+                            <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => toggleAdmin(u.id)} disabled={actionLoading}>
+                              <ShieldCheck className="w-3.5 h-3.5" />
+                            </Button>
+                            <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-destructive hover:text-destructive" onClick={() => deleteUser(u.id)}>
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </Button>
+                          </div>
+                        </td>
+                      )}
                     </tr>
                   ))}
                 </tbody>
@@ -410,7 +419,6 @@ function UsersSection() {
           )}
         </div>
 
-        {/* User Detail Panel */}
         <AnimatePresence>
           {selectedUser && (
             <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 20 }}
@@ -441,14 +449,16 @@ function UsersSection() {
                   <div className="flex justify-between"><span className="text-muted-foreground">Joined</span><span>{formatDate(selectedUser.createdAt)}</span></div>
                   {selectedUser.stripeCustomerId && <div className="flex justify-between"><span className="text-muted-foreground">Stripe</span><span className="font-mono text-xs">{selectedUser.stripeCustomerId.slice(0, 16)}</span></div>}
                 </div>
-                <div className="flex gap-2">
-                  <Button size="sm" variant="outline" className="flex-1 text-xs gap-1" onClick={() => { setCreditModal(selectedUser); setCreditAmt('10'); setCreditDesc('Admin grant'); }}>
-                    <Coins className="w-3 h-3" /> Credits
-                  </Button>
-                  <Button size="sm" variant="outline" className="flex-1 text-xs gap-1" onClick={() => toggleAdmin(selectedUser.id)} disabled={actionLoading}>
-                    <ShieldCheck className="w-3 h-3" /> {selectedUser.isAdmin ? 'Demote' : 'Promote'}
-                  </Button>
-                </div>
+                {!isDemo && (
+                  <div className="flex gap-2">
+                    <Button size="sm" variant="outline" className="flex-1 text-xs gap-1" onClick={() => { setCreditModal(selectedUser); setCreditAmt('10'); setCreditDesc('Admin grant'); }}>
+                      <Coins className="w-3 h-3" /> Credits
+                    </Button>
+                    <Button size="sm" variant="outline" className="flex-1 text-xs gap-1" onClick={() => toggleAdmin(selectedUser.id)} disabled={actionLoading}>
+                      <ShieldCheck className="w-3 h-3" /> {selectedUser.isAdmin ? 'Demote' : 'Promote'}
+                    </Button>
+                  </div>
+                )}
                 <div>
                   <p className="text-xs font-semibold text-muted-foreground mb-2">Recent Transactions</p>
                   <div className="space-y-1 max-h-[220px] overflow-y-auto">
@@ -470,8 +480,7 @@ function UsersSection() {
         </AnimatePresence>
       </div>
 
-      {/* Credit Modal */}
-      {creditModal && (
+      {creditModal && !isDemo && (
         <Modal onClose={() => setCreditModal(null)} title="Adjust Credits" subtitle={[creditModal.firstName, creditModal.lastName].filter(Boolean).join(' ') || creditModal.email || creditModal.id}>
           <div className="space-y-3">
             <div>
@@ -523,7 +532,6 @@ function TransactionsSection() {
       <SectionHeader title="Transactions" subtitle={`${transactions.length} records`} onRefresh={() => load(typeFilter)} />
 
       <div className="grid lg:grid-cols-3 gap-4">
-        {/* Breakdown chart */}
         <div className="bg-card border border-border/50 rounded-2xl p-5 lg:col-span-1">
           <h3 className="text-sm font-semibold mb-3">Breakdown by Type</h3>
           {breakdown.length > 0 ? (
@@ -554,11 +562,10 @@ function TransactionsSection() {
           ) : <p className="text-sm text-muted-foreground text-center py-8">No data</p>}
         </div>
 
-        {/* Transaction table */}
         <div className="bg-card border border-border/50 rounded-2xl overflow-hidden lg:col-span-2">
           <div className="p-4 border-b border-border/50 flex items-center justify-between flex-wrap gap-2">
             <h3 className="text-sm font-semibold">Transaction Log</h3>
-            <div className="flex gap-1">
+            <div className="flex gap-1 flex-wrap">
               {types.map(t => (
                 <button key={t} onClick={() => setTypeFilter(t)}
                   className={`px-3 py-1 rounded-lg text-xs font-medium capitalize transition-colors ${
@@ -587,9 +594,7 @@ function TransactionsSection() {
                       <td className="px-4 py-2.5">
                         <span className={`font-bold ${tx.amount > 0 ? 'text-green-600' : 'text-red-500'}`}>{tx.amount > 0 ? '+' : ''}{tx.amount}</span>
                       </td>
-                      <td className="px-4 py-2.5">
-                        <TypeBadge type={tx.type} />
-                      </td>
+                      <td className="px-4 py-2.5"><TypeBadge type={tx.type} /></td>
                       <td className="px-4 py-2.5 text-xs text-muted-foreground max-w-[200px] truncate">{tx.description ?? '—'}</td>
                       <td className="px-4 py-2.5 text-xs text-muted-foreground">{formatDateTime(tx.createdAt)}</td>
                     </tr>
@@ -605,12 +610,22 @@ function TransactionsSection() {
 }
 
 /* ═══════════════════════════════════════════════════════════
-   REVENUE & STRIPE
+   REVENUE & STRIPE — FULLY FUNCTIONAL
    ═══════════════════════════════════════════════════════════ */
 function RevenueSection() {
+  const isDemo = useIsDemo();
   const [revenue, setRevenue] = useState<any>(null);
   const [stripe, setStripe] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [testResult, setTestResult] = useState<any>(null);
+  const [testing, setTesting] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [showCreateProduct, setShowCreateProduct] = useState(false);
+  const [newProduct, setNewProduct] = useState({ name: '', description: '', credits: '', priceUSD: '' });
+  const [creating, setCreating] = useState(false);
+  const [seeding, setSeeding] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -624,20 +639,138 @@ function RevenueSection() {
 
   useEffect(() => { load(); }, [load]);
 
+  const testConnection = async () => {
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const r = await api('/admin/stripe/test-connection', { method: 'POST' });
+      setTestResult(r);
+    } catch (e: any) { setTestResult({ success: false, error: e.message }); }
+    setTesting(false);
+  };
+
+  const syncProducts = async () => {
+    setSyncing(true);
+    try {
+      const r = await api('/admin/stripe/sync', { method: 'POST' });
+      setMsg(`Sync complete. ${r.productCount} products found.`);
+      load();
+    } catch (e: any) { setMsg(e.message); }
+    setSyncing(false);
+  };
+
+  const createProduct = async () => {
+    setCreating(true);
+    try {
+      await api('/admin/stripe/create-product', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: newProduct.name,
+          description: newProduct.description || undefined,
+          credits: Number(newProduct.credits),
+          priceUSD: Number(newProduct.priceUSD),
+        }),
+      });
+      setMsg(`Product "${newProduct.name}" created successfully`);
+      setNewProduct({ name: '', description: '', credits: '', priceUSD: '' });
+      setShowCreateProduct(false);
+      load();
+    } catch (e: any) { setMsg(e.message); }
+    setCreating(false);
+  };
+
+  const seedDefaults = async () => {
+    if (!confirm('This will create 3 default credit packs (Starter, Pro, Power) in Stripe. Continue?')) return;
+    setSeeding(true);
+    try {
+      const r = await api('/admin/stripe/seed-products', { method: 'POST' });
+      setMsg(`Created ${r.created.length} products successfully`);
+      load();
+    } catch (e: any) { setMsg(e.message); }
+    setSeeding(false);
+  };
+
+  const toggleProduct = async (productId: string, active: boolean) => {
+    try {
+      await api(`/admin/stripe/toggle-product/${productId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ active }),
+      });
+      setMsg(`Product ${active ? 'activated' : 'deactivated'}`);
+      load();
+    } catch (e: any) { setMsg(e.message); }
+  };
+
+  const copyWebhookUrl = () => {
+    if (stripe?.webhookUrl) {
+      navigator.clipboard.writeText(stripe.webhookUrl);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  };
+
   if (loading) return <LoadingPane />;
 
   return (
     <div className="p-6 space-y-6 max-w-[1400px]">
-      <SectionHeader title="Revenue & Stripe" subtitle="Payment analytics and integration status" onRefresh={load} />
+      <SectionHeader title="Revenue & Stripe" subtitle="Payment analytics and integration management" onRefresh={load} />
+      {msg && <AlertBar message={msg} onDismiss={() => setMsg(null)} />}
 
-      {/* Stripe Status */}
+      {/* ── Connection Status ──────────────────────────────── */}
       <div className="grid sm:grid-cols-3 gap-4">
-        <StatusCard icon={CreditCard} label="Stripe Connected" ok={stripe?.connected} detail={stripe?.connected ? 'API key configured' : 'STRIPE_SECRET_KEY not set'} />
-        <StatusCard icon={Activity} label="Webhook Configured" ok={stripe?.webhookConfigured} detail={stripe?.webhookConfigured ? 'Webhook secret set' : 'STRIPE_WEBHOOK_SECRET not set'} />
-        <StatusCard icon={BarChart3} label="Products" ok={stripe?.productCount > 0} detail={`${stripe?.productCount ?? 0} active products`} />
+        <StatusCard icon={Plug} label="Stripe API" ok={stripe?.connected} detail={stripe?.connected ? 'Secret key configured' : 'STRIPE_SECRET_KEY not set'} />
+        <StatusCard icon={Globe} label="Webhook" ok={stripe?.webhookConfigured} detail={stripe?.webhookConfigured ? 'Signing secret set' : 'STRIPE_WEBHOOK_SECRET not set'} />
+        <StatusCard icon={Package} label="Products" ok={stripe?.productCount > 0} detail={`${stripe?.productCount ?? 0} active products`} />
       </div>
 
-      {/* Revenue Stats */}
+      {/* ── Test Connection ────────────────────────────────── */}
+      <div className="bg-card border border-border/50 rounded-2xl p-5 space-y-4">
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-semibold flex items-center gap-2"><Plug className="w-4 h-4" /> Connection Test</h3>
+          <Button onClick={testConnection} disabled={testing} size="sm" variant="outline" className="gap-2">
+            {testing ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Zap className="w-3.5 h-3.5" />}
+            {testing ? 'Testing…' : 'Test Connection'}
+          </Button>
+        </div>
+        {testResult && (
+          <div className={`rounded-xl p-4 text-sm ${testResult.success ? 'bg-green-500/10 border border-green-500/20' : 'bg-destructive/10 border border-destructive/20'}`}>
+            {testResult.success ? (
+              <div className="space-y-1.5">
+                <div className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-green-500" /> <span className="font-semibold text-green-700">Connection Successful</span></div>
+                <div className="grid sm:grid-cols-2 gap-1 text-xs">
+                  <span><span className="text-muted-foreground">Account:</span> {testResult.accountId}</span>
+                  <span><span className="text-muted-foreground">Business:</span> {testResult.businessName ?? 'N/A'}</span>
+                  <span><span className="text-muted-foreground">Country:</span> {testResult.country ?? 'N/A'}</span>
+                  <span><span className="text-muted-foreground">Mode:</span> {testResult.livemode ? 'Live' : 'Test'}</span>
+                  <span><span className="text-muted-foreground">Charges:</span> {testResult.chargesEnabled ? 'Enabled' : 'Disabled'}</span>
+                  <span><span className="text-muted-foreground">Payouts:</span> {testResult.payoutsEnabled ? 'Enabled' : 'Disabled'}</span>
+                </div>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2"><XCircle className="w-4 h-4 text-destructive" /> <span className="text-destructive">{testResult.error}</span></div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* ── Webhook URL ────────────────────────────────────── */}
+      {stripe?.webhookUrl && (
+        <div className="bg-card border border-border/50 rounded-2xl p-5 space-y-3">
+          <h3 className="text-sm font-semibold flex items-center gap-2"><Globe className="w-4 h-4" /> Webhook Endpoint</h3>
+          <div className="flex items-center gap-2">
+            <code className="flex-1 bg-muted/50 px-3 py-2 rounded-lg text-xs font-mono break-all">{stripe.webhookUrl}</code>
+            <Button size="sm" variant="outline" className="shrink-0 gap-1" onClick={copyWebhookUrl}>
+              {copied ? <CheckCircle2 className="w-3.5 h-3.5 text-green-500" /> : <Copy className="w-3.5 h-3.5" />}
+              {copied ? 'Copied' : 'Copy'}
+            </Button>
+          </div>
+          <p className="text-xs text-muted-foreground">Events to enable: <code className="bg-muted px-1 rounded">checkout.session.completed</code></p>
+        </div>
+      )}
+
+      {/* ── Revenue Stats ──────────────────────────────────── */}
       {revenue && (
         <div className="grid sm:grid-cols-2 gap-4">
           <div className="bg-card border border-border/50 rounded-2xl p-5">
@@ -652,7 +785,7 @@ function RevenueSection() {
         </div>
       )}
 
-      {/* Revenue Chart */}
+      {/* ── Revenue Chart ──────────────────────────────────── */}
       {revenue?.daily?.length > 0 && (
         <div className="bg-card border border-border/50 rounded-2xl p-5">
           <h3 className="text-sm font-semibold mb-4">30-Day Purchase Activity</h3>
@@ -669,31 +802,108 @@ function RevenueSection() {
         </div>
       )}
 
-      {/* Stripe Products */}
-      {stripe?.products?.length > 0 && (
-        <div className="bg-card border border-border/50 rounded-2xl p-5">
-          <h3 className="text-sm font-semibold mb-3">Stripe Products</h3>
+      {/* ── Product Management ─────────────────────────────── */}
+      <div className="bg-card border border-border/50 rounded-2xl p-5 space-y-4">
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <h3 className="text-sm font-semibold flex items-center gap-2"><Package className="w-4 h-4" /> Stripe Products</h3>
+          <div className="flex gap-2">
+            {!isDemo && stripe?.connected && (
+              <>
+                <Button size="sm" variant="outline" className="gap-1 text-xs" onClick={syncProducts} disabled={syncing}>
+                  <RefreshCw className={`w-3 h-3 ${syncing ? 'animate-spin' : ''}`} /> Sync
+                </Button>
+                {(stripe?.productCount ?? 0) === 0 && (
+                  <Button size="sm" variant="outline" className="gap-1 text-xs" onClick={seedDefaults} disabled={seeding}>
+                    <Zap className={`w-3 h-3 ${seeding ? 'animate-spin' : ''}`} /> Seed Defaults
+                  </Button>
+                )}
+                <Button size="sm" className="gap-1 text-xs" onClick={() => setShowCreateProduct(true)}>
+                  <Plus className="w-3 h-3" /> New Product
+                </Button>
+              </>
+            )}
+          </div>
+        </div>
+
+        {stripe?.products?.length > 0 ? (
           <div className="grid sm:grid-cols-3 gap-4">
             {stripe.products.map((p: any) => (
-              <div key={p.id} className="border border-border/50 rounded-xl p-4 space-y-2">
+              <div key={p.id} className="border border-border/50 rounded-xl p-4 space-y-2 relative">
                 <h4 className="font-semibold">{p.name}</h4>
                 {p.description && <p className="text-xs text-muted-foreground">{p.description}</p>}
                 <div className="flex items-center justify-between">
                   <span className="text-sm font-bold text-primary">{p.credits} credits</span>
-                  {p.prices?.[0] && <span className="text-sm">${(p.prices[0].unitAmount / 100).toFixed(2)}</span>}
+                  {p.prices?.[0] && <span className="text-sm font-medium">${(p.prices[0].unitAmount / 100).toFixed(2)}</span>}
                 </div>
-                <p className="text-xs text-muted-foreground font-mono">{p.id.slice(0, 24)}</p>
+                <p className="text-[10px] text-muted-foreground font-mono">{p.id}</p>
+                {!isDemo && stripe?.connected && (
+                  <div className="flex gap-1 pt-1">
+                    <Button size="sm" variant="ghost" className="h-6 text-[10px] gap-1 px-2" onClick={() => toggleProduct(p.id, false)}>
+                      <EyeOff className="w-3 h-3" /> Deactivate
+                    </Button>
+                  </div>
+                )}
               </div>
             ))}
           </div>
-        </div>
+        ) : (
+          <div className="text-center py-8 space-y-2">
+            <Package className="w-8 h-8 text-muted-foreground mx-auto" />
+            <p className="text-sm text-muted-foreground">No products yet</p>
+            {stripe?.connected && !isDemo && (
+              <p className="text-xs text-muted-foreground">Click "Seed Defaults" to create starter packs, or "New Product" to create a custom one</p>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* ── Create Product Modal ───────────────────────────── */}
+      {showCreateProduct && !isDemo && (
+        <Modal onClose={() => setShowCreateProduct(false)} title="Create Credit Pack" subtitle="This will create a new product and price in Stripe">
+          <div className="space-y-3">
+            <div>
+              <label className="text-xs font-medium mb-1 block">Product Name *</label>
+              <input type="text" value={newProduct.name} onChange={e => setNewProduct(p => ({ ...p, name: e.target.value }))}
+                placeholder="e.g. Mega Pack" className="w-full border border-border rounded-lg px-3 py-2 bg-background text-sm" />
+            </div>
+            <div>
+              <label className="text-xs font-medium mb-1 block">Description</label>
+              <input type="text" value={newProduct.description} onChange={e => setNewProduct(p => ({ ...p, description: e.target.value }))}
+                placeholder="e.g. Best value for teams" className="w-full border border-border rounded-lg px-3 py-2 bg-background text-sm" />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs font-medium mb-1 block">Credits *</label>
+                <input type="number" value={newProduct.credits} onChange={e => setNewProduct(p => ({ ...p, credits: e.target.value }))}
+                  placeholder="e.g. 100" className="w-full border border-border rounded-lg px-3 py-2 bg-background text-sm" />
+              </div>
+              <div>
+                <label className="text-xs font-medium mb-1 block">Price (USD) *</label>
+                <input type="number" step="0.01" value={newProduct.priceUSD} onChange={e => setNewProduct(p => ({ ...p, priceUSD: e.target.value }))}
+                  placeholder="e.g. 9.99" className="w-full border border-border rounded-lg px-3 py-2 bg-background text-sm" />
+              </div>
+            </div>
+          </div>
+          <div className="flex gap-3 mt-4">
+            <Button onClick={() => setShowCreateProduct(false)} variant="outline" className="flex-1">Cancel</Button>
+            <Button onClick={createProduct} disabled={creating || !newProduct.name || !newProduct.credits || !newProduct.priceUSD} className="flex-1 gap-2">
+              {creating && <RefreshCw className="w-4 h-4 animate-spin" />} Create
+            </Button>
+          </div>
+        </Modal>
       )}
 
+      {/* ── Not Connected Banner ───────────────────────────── */}
       {!stripe?.connected && (
         <div className="bg-orange-500/10 border border-orange-500/20 rounded-2xl p-6 text-center space-y-2">
           <CreditCard className="w-10 h-10 text-orange-500 mx-auto" />
           <p className="font-semibold text-orange-700">Stripe Not Connected</p>
-          <p className="text-sm text-muted-foreground">Add your Stripe integration to enable credit purchases. Set <code className="bg-muted px-1 rounded">STRIPE_SECRET_KEY</code> in environment variables.</p>
+          <p className="text-sm text-muted-foreground">Add the Stripe integration or set <code className="bg-muted px-1 rounded">STRIPE_SECRET_KEY</code> to enable payments.</p>
+          <div className="flex justify-center gap-4 pt-2 text-xs text-muted-foreground">
+            <span>1. Connect Stripe integration</span>
+            <span>2. Seed default products</span>
+            <span>3. Configure webhook</span>
+          </div>
         </div>
       )}
     </div>
@@ -704,6 +914,7 @@ function RevenueSection() {
    SETTINGS
    ═══════════════════════════════════════════════════════════ */
 function SettingsSection() {
+  const isDemo = useIsDemo();
   const [system, setSystem] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [currentPw, setCurrentPw] = useState('');
@@ -742,7 +953,6 @@ function SettingsSection() {
     <div className="p-6 space-y-6 max-w-[1000px]">
       <SectionHeader title="Settings" subtitle="System configuration and health" onRefresh={load} />
 
-      {/* System Health */}
       <div className="bg-card border border-border/50 rounded-2xl p-5 space-y-4">
         <h3 className="text-sm font-semibold flex items-center gap-2"><Server className="w-4 h-4" /> System Health</h3>
         {loading ? <div className="text-center text-muted-foreground py-4"><RefreshCw className="w-4 h-4 animate-spin inline" /></div> : system ? (
@@ -763,34 +973,40 @@ function SettingsSection() {
         ) : <p className="text-sm text-muted-foreground">Failed to load system info</p>}
       </div>
 
-      {/* Admin Credentials */}
-      <div className="bg-card border border-border/50 rounded-2xl p-5 space-y-4">
-        <h3 className="text-sm font-semibold flex items-center gap-2"><Lock className="w-4 h-4" /> Admin Credentials</h3>
-        <p className="text-xs text-muted-foreground">Changes apply for the current server session. Update environment variables (<code className="bg-muted px-1 rounded text-[10px]">ADMIN_USERNAME</code>, <code className="bg-muted px-1 rounded text-[10px]">ADMIN_PASSWORD</code>) for permanent changes.</p>
-        {credMsg && <AlertBar message={credMsg} onDismiss={() => setCredMsg(null)} />}
-        <form onSubmit={updateCreds} className="space-y-3 max-w-sm">
-          <div>
-            <label className="text-xs font-medium mb-1 block">Current Password *</label>
-            <input type="password" value={currentPw} onChange={e => setCurrentPw(e.target.value)} required
-              className="w-full border border-border rounded-lg px-3 py-2 bg-background text-sm" />
-          </div>
-          <div>
-            <label className="text-xs font-medium mb-1 block">New Username (optional)</label>
-            <input type="text" value={newUsername} onChange={e => setNewUsername(e.target.value)} placeholder="Leave empty to keep current"
-              className="w-full border border-border rounded-lg px-3 py-2 bg-background text-sm" />
-          </div>
-          <div>
-            <label className="text-xs font-medium mb-1 block">New Password (optional)</label>
-            <input type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)} placeholder="Leave empty to keep current"
-              className="w-full border border-border rounded-lg px-3 py-2 bg-background text-sm" />
-          </div>
-          <Button type="submit" disabled={saving} className="gap-2">
-            {saving && <RefreshCw className="w-4 h-4 animate-spin" />} Update Credentials
-          </Button>
-        </form>
-      </div>
+      {!isDemo ? (
+        <div className="bg-card border border-border/50 rounded-2xl p-5 space-y-4">
+          <h3 className="text-sm font-semibold flex items-center gap-2"><Lock className="w-4 h-4" /> Admin Credentials</h3>
+          <p className="text-xs text-muted-foreground">Changes apply for the current server session. Update environment variables for permanent changes.</p>
+          {credMsg && <AlertBar message={credMsg} onDismiss={() => setCredMsg(null)} />}
+          <form onSubmit={updateCreds} className="space-y-3 max-w-sm">
+            <div>
+              <label className="text-xs font-medium mb-1 block">Current Password *</label>
+              <input type="password" value={currentPw} onChange={e => setCurrentPw(e.target.value)} required
+                className="w-full border border-border rounded-lg px-3 py-2 bg-background text-sm" />
+            </div>
+            <div>
+              <label className="text-xs font-medium mb-1 block">New Username (optional)</label>
+              <input type="text" value={newUsername} onChange={e => setNewUsername(e.target.value)} placeholder="Leave empty to keep current"
+                className="w-full border border-border rounded-lg px-3 py-2 bg-background text-sm" />
+            </div>
+            <div>
+              <label className="text-xs font-medium mb-1 block">New Password (optional)</label>
+              <input type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)} placeholder="Leave empty to keep current"
+                className="w-full border border-border rounded-lg px-3 py-2 bg-background text-sm" />
+            </div>
+            <Button type="submit" disabled={saving} className="gap-2">
+              {saving && <RefreshCw className="w-4 h-4 animate-spin" />} Update Credentials
+            </Button>
+          </form>
+        </div>
+      ) : (
+        <div className="bg-amber-500/10 border border-amber-500/20 rounded-2xl p-5 text-center space-y-2">
+          <Lock className="w-8 h-8 text-amber-500 mx-auto" />
+          <p className="font-semibold text-amber-700">Credential Management Disabled</p>
+          <p className="text-sm text-muted-foreground">Demo admins cannot modify credentials.</p>
+        </div>
+      )}
 
-      {/* Quick Reference */}
       <div className="bg-card border border-border/50 rounded-2xl p-5 space-y-3">
         <h3 className="text-sm font-semibold flex items-center gap-2"><Database className="w-4 h-4" /> Environment Variables</h3>
         <div className="space-y-1.5 text-xs">
@@ -807,6 +1023,26 @@ function SettingsSection() {
               <span className="text-muted-foreground">{v.desc}</span>
             </div>
           ))}
+        </div>
+      </div>
+
+      <div className="bg-card border border-border/50 rounded-2xl p-5 space-y-3">
+        <h3 className="text-sm font-semibold flex items-center gap-2"><ShieldCheck className="w-4 h-4" /> Admin Accounts</h3>
+        <div className="space-y-2 text-sm">
+          <div className="flex items-center justify-between p-3 rounded-xl bg-muted/30">
+            <div>
+              <p className="font-medium">Full Admin</p>
+              <p className="text-xs text-muted-foreground">Full access — can modify everything</p>
+            </div>
+            <code className="text-xs bg-primary/10 text-primary px-2 py-1 rounded font-mono">admin / admin123</code>
+          </div>
+          <div className="flex items-center justify-between p-3 rounded-xl bg-amber-500/10 border border-amber-500/20">
+            <div>
+              <p className="font-medium">Demo Admin</p>
+              <p className="text-xs text-muted-foreground">Read-only — can view all data but cannot modify</p>
+            </div>
+            <code className="text-xs bg-amber-500/20 text-amber-700 px-2 py-1 rounded font-mono">demo / demo1234</code>
+          </div>
         </div>
       </div>
     </div>
@@ -845,7 +1081,7 @@ function ErrorPane({ onRetry }: { onRetry: () => void }) {
 }
 
 function AlertBar({ message, onDismiss }: { message: string; onDismiss: () => void }) {
-  const isError = message.toLowerCase().includes('error') || message.toLowerCase().includes('incorrect') || message.toLowerCase().includes('fail');
+  const isError = message.toLowerCase().includes('error') || message.toLowerCase().includes('incorrect') || message.toLowerCase().includes('fail') || message.toLowerCase().includes('cannot');
   return (
     <div className={`rounded-xl px-4 py-2.5 text-sm flex justify-between items-center ${
       isError ? 'bg-destructive/10 border border-destructive/20 text-destructive' : 'bg-green-500/10 border border-green-500/20 text-green-600'
@@ -858,8 +1094,9 @@ function AlertBar({ message, onDismiss }: { message: string; onDismiss: () => vo
 
 function Modal({ onClose, title, subtitle, children }: { onClose: () => void; title: string; subtitle?: string; children: React.ReactNode }) {
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={onClose}>
       <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }}
+        onClick={e => e.stopPropagation()}
         className="bg-background border border-border rounded-2xl p-6 w-full max-w-sm space-y-3">
         <h3 className="text-lg font-bold">{title}</h3>
         {subtitle && <p className="text-sm text-muted-foreground">{subtitle}</p>}

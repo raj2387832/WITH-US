@@ -78,35 +78,42 @@ artifacts-monorepo/
 ## Admin System
 
 ### Authentication
-- Dedicated username/password login with HMAC-signed cookie (8h expiry)
-- `POST /api/admin/login` — authenticates with ADMIN_USERNAME + ADMIN_PASSWORD env vars
-- `GET /api/admin/session` — checks cookie validity
-- `POST /api/admin/logout-admin` — clears admin cookie
+- Dedicated username/password login with HMAC-signed cookie (8h expiry, role-based: admin or demo)
+- Two admin accounts:
+  - **Full Admin**: `admin` / `admin123` — full read/write access (set via ADMIN_USERNAME, ADMIN_PASSWORD env vars)
+  - **Demo Admin**: `demo` / `demo1234` — read-only access, all write operations blocked
+- `POST /api/admin/login` — returns `{ ok: true, role: "admin"|"demo" }`
+- `GET /api/admin/session` — returns `{ authenticated, role }`
+- Demo mode: yellow banner, no action buttons, no credential management, "DEMO" badge in sidebar
 - Also accepts Replit OIDC admin users (isAdmin flag)
-- Default credentials: admin / admin123 (set via ADMIN_USERNAME, ADMIN_PASSWORD, ADMIN_COOKIE_SECRET env vars)
 
 ### Admin Panel Sections
 - **Dashboard** — 8 stat cards, 14-day area chart (users, credits granted/used), recent activity feed, top users leaderboard
-- **Users** — Searchable table, sliding detail panel with transaction history, credit adjustment modal, admin role toggle, user deletion
+- **Users** — Searchable table, sliding detail panel with transaction history, credit adjustment modal, admin role toggle, user deletion (actions hidden in demo mode)
 - **Transactions** — Filterable table by type, pie chart breakdown (daily/purchase/use/admin_grant/refund)
-- **Revenue & Stripe** — Connection status cards, 30-day purchase bar chart, Stripe product listing, revenue metrics
-- **Settings** — System health (Node, DB, memory, uptime), admin credential update (session-scoped), env var reference
+- **Revenue & Stripe** — Full Stripe management: connection test, webhook URL with copy, product creation/seeding/sync, 30-day purchase bar chart, revenue metrics
+- **Settings** — System health (Node, DB, memory, uptime), admin credential update (disabled in demo mode), admin accounts reference, env var reference
 
 ### Admin API Endpoints
-- `GET /api/admin/dashboard` — comprehensive dashboard stats (users, credits, transactions, top users, recent activity)
+- `GET /api/admin/dashboard` — comprehensive dashboard stats
 - `GET /api/admin/trends?days=14` — daily trends for charts
 - `GET /api/admin/stats` — basic totals
 - `GET /api/admin/users?q=` — user list with optional search
 - `GET /api/admin/users/:id` — user detail with transaction history
-- `POST /api/admin/users/:id/credits` — grant/deduct credits
-- `POST /api/admin/users/:id/toggle-admin` — flip admin role
-- `POST /api/admin/users/:id/reset-credits` — reset to zero
-- `DELETE /api/admin/users/:id` — delete user + all transactions
+- `POST /api/admin/users/:id/credits` — grant/deduct credits (blocked for demo)
+- `POST /api/admin/users/:id/toggle-admin` — flip admin role (blocked for demo)
+- `POST /api/admin/users/:id/reset-credits` — reset to zero (blocked for demo)
+- `DELETE /api/admin/users/:id` — delete user + all transactions (blocked for demo)
 - `GET /api/admin/transactions?type=` — filtered transaction list + breakdown
 - `GET /api/admin/revenue` — 30-day revenue chart data
-- `GET /api/admin/stripe/status` — Stripe connection + product status
+- `GET /api/admin/stripe/status` — Stripe connection, products, webhook URL
+- `POST /api/admin/stripe/test-connection` — test Stripe API key
+- `POST /api/admin/stripe/sync` — sync products from Stripe (blocked for demo)
+- `POST /api/admin/stripe/seed-products` — create 3 default credit packs (blocked for demo)
+- `POST /api/admin/stripe/create-product` — create custom product (blocked for demo)
+- `POST /api/admin/stripe/toggle-product/:id` — activate/deactivate product (blocked for demo)
 - `GET /api/admin/system` — system health (DB, memory, uptime, versions)
-- `POST /api/admin/settings/credentials` — update admin credentials (session-scoped)
+- `POST /api/admin/settings/credentials` — update admin credentials (blocked for demo)
 
 ## Database Schema
 

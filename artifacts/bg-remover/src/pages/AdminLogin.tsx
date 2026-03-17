@@ -7,7 +7,7 @@ const BASE = import.meta.env.BASE_URL.replace(/\/$/, '');
 function apiUrl(path: string) { return `${BASE}/api${path}`; }
 
 interface AdminLoginProps {
-  onSuccess: () => void;
+  onSuccess: (role?: string) => void;
 }
 
 export default function AdminLogin({ onSuccess }: AdminLoginProps) {
@@ -31,7 +31,7 @@ export default function AdminLogin({ onSuccess }: AdminLoginProps) {
       });
       const data = await res.json();
       if (res.ok && data.ok) {
-        onSuccess();
+        onSuccess(data.role);
       } else {
         setError(data.error ?? 'Login failed. Check your credentials.');
       }
@@ -111,9 +111,13 @@ export default function AdminLogin({ onSuccess }: AdminLoginProps) {
             </Button>
           </form>
 
-          <p className="text-center text-xs text-muted-foreground">
-            Session lasts 8 hours. Credentials are set via environment variables.
-          </p>
+          <div className="text-center text-xs text-muted-foreground space-y-1.5">
+            <p>Session lasts 8 hours.</p>
+            <div className="flex justify-center gap-4 pt-1">
+              <span className="bg-muted px-2 py-0.5 rounded font-mono">admin / admin123</span>
+              <span className="bg-amber-500/10 text-amber-700 px-2 py-0.5 rounded font-mono">demo / demo1234</span>
+            </div>
+          </div>
         </div>
       </motion.div>
     </div>
