@@ -29,8 +29,14 @@ if (!rawPort) throw new Error("PORT environment variable is required but was not
 const port = Number(rawPort);
 if (Number.isNaN(port) || port <= 0) throw new Error(`Invalid PORT value: "${rawPort}"`);
 
-await initStripe();
+async function main() {
+  await initStripe();
+  app.listen(port, () => {
+    console.log(`Server listening on port ${port}`);
+  });
+}
 
-app.listen(port, () => {
-  console.log(`Server listening on port ${port}`);
+main().catch((err) => {
+  console.error('Server startup failed:', err);
+  process.exit(1);
 });
