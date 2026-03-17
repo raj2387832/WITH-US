@@ -46,7 +46,7 @@ export function useBgRemover() {
       const { removeBackground } = await import('@imgly/background-removal');
 
       const blob = await removeBackground(originalFile, {
-        publicPath: `https://cdn.jsdelivr.net/npm/@imgly/background-removal@1.7.0/dist/`,
+        publicPath: `https://staticimgly.com/@imgly/background-removal-data/1.7.0/dist/`,
         debug: false,
         model: 'medium',
         output: {
