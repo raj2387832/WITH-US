@@ -17,87 +17,178 @@ const WORKER_SRC = /* javascript */ `
 importScripts('https://docs.opencv.org/4.9.0/opencv.js');
 
 var cvReady = false;
+function notifyReady() { cvReady = true; postMessage({ type: 'ready' }); }
+if (typeof cv !== 'undefined' && cv.Mat) { notifyReady(); }
+else if (typeof cv !== 'undefined') { cv['onRuntimeInitialized'] = notifyReady; }
 
-function notifyReady() {
-  cvReady = true;
-  postMessage({ type: 'ready' });
-}
+// Find best donor patch: scan candidate regions near the mask,
+// score by border pixel similarity, return the best (or -1 if none fits).
+function findDonor(srcData, dilatedData, width, height, minX, minY, mW, mH) {
+  var GAP = Math.max(4, Math.round(Math.min(mW, mH) * 0.15));
+  var candidates = [
+    { x: minX,           y: minY - mH - GAP },
+    { x: minX,           y: minY + mH + GAP },
+    { x: minX - mW - GAP, y: minY           },
+    { x: minX + mW + GAP, y: minY           },
+    { x: minX - mW - GAP, y: minY - mH - GAP },
+    { x: minX + mW + GAP, y: minY - mH - GAP },
+    { x: minX - mW - GAP, y: minY + mH + GAP },
+    { x: minX + mW + GAP, y: minY + mH + GAP },
+  ];
 
-if (typeof cv !== 'undefined' && cv.Mat) {
-  notifyReady();
-} else if (typeof cv !== 'undefined') {
-  cv['onRuntimeInitialized'] = notifyReady;
+  // Collect border pixels of the mask (unmasked neighbours of masked pixels)
+  var borderSamples = [];
+  var SAMPLE_STEP = Math.max(1, Math.round(Math.min(mW, mH) / 20));
+  for (var sy = minY; sy <= minY + mH; sy += SAMPLE_STEP) {
+    for (var sx = minX; sx <= minX + mW; sx += SAMPLE_STEP) {
+      if (sy < 0 || sy >= height || sx < 0 || sx >= width) continue;
+      if (dilatedData[sy * width + sx] === 0) continue; // not in mask
+      // look for a free neighbour
+      var nbx = -1, nby = -1;
+      var dirs = [[-1,0],[1,0],[0,-1],[0,1]];
+      for (var d = 0; d < 4; d++) {
+        var ty = sy + dirs[d][0], tx = sx + dirs[d][1];
+        if (ty < 0 || ty >= height || tx < 0 || tx >= width) continue;
+        if (dilatedData[ty * width + tx] === 0) { nbx = tx; nby = ty; break; }
+      }
+      if (nbx >= 0) {
+        var ni = (nby * width + nbx) * 3;
+        borderSamples.push({ r: srcData[ni], g: srcData[ni+1], b: srcData[ni+2], ox: sx - minX, oy: sy - minY });
+      }
+    }
+  }
+
+  var bestScore = Infinity, bestX = -1, bestY = -1;
+
+  for (var ci = 0; ci < candidates.length; ci++) {
+    var c = candidates[ci];
+    var dx = Math.round(c.x), dy = Math.round(c.y);
+    if (dx < 0 || dy < 0 || dx + mW > width || dy + mH > height) continue;
+
+    // Reject if overlaps mask
+    var overlap = false;
+    outer: for (var iy = dy; iy < dy + mH; iy += SAMPLE_STEP) {
+      for (var ix = dx; ix < dx + mW; ix += SAMPLE_STEP) {
+        if (dilatedData[iy * width + ix] > 0) { overlap = true; break outer; }
+      }
+    }
+    if (overlap) continue;
+
+    // Score: SSD against border samples
+    var ssd = 0;
+    for (var si = 0; si < borderSamples.length; si++) {
+      var s = borderSamples[si];
+      var px = dx + s.ox, py = dy + s.oy;
+      if (px < 0 || px >= width || py < 0 || py >= height) continue;
+      var pi = (py * width + px) * 3;
+      var dr = srcData[pi] - s.r, dg = srcData[pi+1] - s.g, db = srcData[pi+2] - s.b;
+      ssd += dr*dr + dg*dg + db*db;
+    }
+    if (ssd < bestScore) { bestScore = ssd; bestX = dx; bestY = dy; }
+  }
+
+  return { x: bestX, y: bestY };
 }
 
 self.addEventListener('message', function (e) {
-  var type = e.data.type;
+  if (e.data.type === 'ping') { postMessage({ type: cvReady ? 'ready' : 'loading' }); return; }
+  if (e.data.type !== 'inpaint') return;
+  if (!cvReady) { postMessage({ type: 'error', message: 'OpenCV not ready' }); return; }
 
-  if (type === 'ping') {
-    postMessage({ type: cvReady ? 'ready' : 'loading' });
-    return;
-  }
+  var imageData = e.data.imageData, maskData = e.data.maskData;
+  var width = e.data.width, height = e.data.height;
 
-  if (type === 'inpaint') {
-    if (!cvReady) { postMessage({ type: 'error', message: 'OpenCV not ready' }); return; }
-    var imageData = e.data.imageData;
-    var maskData  = e.data.maskData;
-    var width     = e.data.width;
-    var height    = e.data.height;
-    try {
-      // Build RGBA source mat
-      var srcRGBA = new cv.Mat(height, width, cv.CV_8UC4);
-      srcRGBA.data.set(imageData);
+  try {
+    // === Build RGBA → RGB source ===
+    var srcRGBA = new cv.Mat(height, width, cv.CV_8UC4);
+    srcRGBA.data.set(imageData);
+    var srcRGB = new cv.Mat();
+    cv.cvtColor(srcRGBA, srcRGB, cv.COLOR_RGBA2RGB);
+    srcRGBA.delete();
 
-      // cv.inpaint only accepts 1- or 3-channel images — convert RGBA → RGB
-      var srcRGB = new cv.Mat();
-      cv.cvtColor(srcRGBA, srcRGB, cv.COLOR_RGBA2RGB);
+    // === Binary mask from painted alpha ===
+    var rawMask = new cv.Mat(height, width, cv.CV_8UC1);
+    for (var i = 0; i < maskData.length; i += 4)
+      rawMask.data[i / 4] = maskData[i + 3] > 10 ? 255 : 0;
+    var k3 = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(3, 3));
+    var dilated = new cv.Mat();
+    cv.dilate(rawMask, dilated, k3);
+    k3.delete(); rawMask.delete();
 
-      // Build binary mask from the painted layer's alpha channel
-      var maskMat = new cv.Mat(height, width, cv.CV_8UC1);
-      for (var i = 0; i < maskData.length; i += 4)
-        maskMat.data[i / 4] = maskData[i + 3] > 10 ? 255 : 0;
-
-      // Minimal dilation — just 1 px to cover brush edge aliasing
-      var kernel  = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(3, 3));
-      var dilated = new cv.Mat();
-      cv.dilate(maskMat, dilated, kernel);
-
-      // Pass 1 – Navier-Stokes at tight radius for structure
-      var pass1 = new cv.Mat();
-      cv.inpaint(srcRGB, dilated, pass1, 3, cv.INPAINT_NS);
-
-      // Pass 2 – Telea at tight radius for texture detail
-      var dstRGB = new cv.Mat();
-      cv.inpaint(pass1, dilated, dstRGB, 3, cv.INPAINT_TELEA);
-
-      // Sharpen with an unsharp mask (blurred copy subtracted from original)
-      var blurred = new cv.Mat();
-      cv.GaussianBlur(dstRGB, blurred, new cv.Size(0, 0), 1.5);
-      var sharpened = new cv.Mat();
-      cv.addWeighted(dstRGB, 1.6, blurred, -0.6, 0, sharpened);
-      blurred.delete();
-
-      // Blend: start from a copy of the original, then paste sharpened only inside the mask
-      var finalRGB = srcRGB.clone();
-      sharpened.copyTo(finalRGB, dilated);            // overwrite inside mask with inpainted+sharpened
-      sharpened.delete(); dstRGB.delete(); pass1.delete();
-
-      // Convert result back to RGBA so it matches canvas pixel format
-      var dstRGBA = new cv.Mat();
-      cv.cvtColor(finalRGB, dstRGBA, cv.COLOR_RGB2RGBA);
-
-      var result = new Uint8ClampedArray(dstRGBA.data.length);
-      result.set(dstRGBA.data);
-
-      srcRGBA.delete(); srcRGB.delete(); maskMat.delete();
-      dilated.delete(); kernel.delete(); finalRGB.delete(); dstRGBA.delete();
-
-      postMessage({ type: 'result', data: result, width: width, height: height }, [result.buffer]);
-    } catch (err) {
-      postMessage({ type: 'error', message: String(err) });
+    // === Mask bounding box ===
+    var minX = width, maxX = 0, minY = height, maxY = 0;
+    for (var my = 0; my < height; my++) {
+      for (var mx = 0; mx < width; mx++) {
+        if (dilated.data[my * width + mx] > 0) {
+          if (mx < minX) minX = mx; if (mx > maxX) maxX = mx;
+          if (my < minY) minY = my; if (my > maxY) maxY = my;
+        }
+      }
     }
+    var mW = maxX - minX + 1, mH = maxY - minY + 1;
+
+    // === Try to find a texture-matched donor patch ===
+    var donor = findDonor(srcRGB.data, dilated.data, width, height, minX, minY, mW, mH);
+    var finalRGB = srcRGB.clone(); // start as copy of original
+
+    if (donor.x >= 0 && mW >= 3 && mH >= 3) {
+      // ── Seamless-clone path ──────────────────────────────────────────────
+      // Extract donor ROI
+      var donorMat = srcRGB.roi(new cv.Rect(donor.x, donor.y, mW, mH));
+      
+      // Mask for seamlessClone must have 0s on the 1-px border of src
+      var scMask = new cv.Mat(mH, mW, cv.CV_8UC1, new cv.Scalar(0));
+      cv.rectangle(scMask, new cv.Point(1, 1), new cv.Point(mW - 2, mH - 2), new cv.Scalar(255), -1);
+
+      // Center of destination region (clamped so src fits inside dst)
+      var cpx = Math.max(Math.ceil(mW / 2), Math.min(width  - Math.ceil(mW / 2), Math.round((minX + maxX) / 2)));
+      var cpy = Math.max(Math.ceil(mH / 2), Math.min(height - Math.ceil(mH / 2), Math.round((minY + maxY) / 2)));
+
+      var cloned = new cv.Mat();
+      try {
+        cv.seamlessClone(donorMat, srcRGB, scMask, new cv.Point(cpx, cpy), cloned, cv.MIXED_CLONE);
+        // Copy only inside the user's mask (leave rest pristine)
+        cloned.copyTo(finalRGB, dilated);
+      } catch (_) {
+        // Fall through to inpaint below
+        doInpaint(srcRGB, dilated, finalRGB);
+      }
+      cloned.delete(); donorMat.delete(); scMask.delete();
+    } else {
+      // ── Inpaint fallback (thin/text watermarks, or mask touches all edges) ─
+      doInpaint(srcRGB, dilated, finalRGB);
+    }
+
+    // === Light sharpen inside the mask ===
+    var blurred = new cv.Mat();
+    cv.GaussianBlur(finalRGB, blurred, new cv.Size(0, 0), 1.0);
+    var sharpened = new cv.Mat();
+    cv.addWeighted(finalRGB, 1.4, blurred, -0.4, 0, sharpened);
+    blurred.delete();
+    sharpened.copyTo(finalRGB, dilated);
+    sharpened.delete();
+
+    // === RGBA output ===
+    var dstRGBA = new cv.Mat();
+    cv.cvtColor(finalRGB, dstRGBA, cv.COLOR_RGB2RGBA);
+    srcRGB.delete(); dilated.delete(); finalRGB.delete();
+
+    var out = new Uint8ClampedArray(dstRGBA.data.length);
+    out.set(dstRGBA.data);
+    dstRGBA.delete();
+
+    postMessage({ type: 'result', data: out, width: width, height: height }, [out.buffer]);
+  } catch (err) {
+    postMessage({ type: 'error', message: String(err) });
   }
 });
+
+function doInpaint(srcRGB, mask, dst) {
+  var tmp = new cv.Mat();
+  cv.inpaint(srcRGB, mask, tmp, 3, cv.INPAINT_TELEA);
+  tmp.copyTo(dst, mask);
+  tmp.delete();
+}
 `;
 
 function getWorker(): Promise<Worker> {
