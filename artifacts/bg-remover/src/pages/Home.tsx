@@ -1,4 +1,4 @@
-import { Sparkles, Settings2, Image as ImageIcon } from 'lucide-react';
+import { Sparkles, Settings2, Image as ImageIcon, RefreshCw, Download } from 'lucide-react';
 import { useBgRemover } from '@/hooks/use-bg-remover';
 import { ImageUploader } from '@/components/ImageUploader';
 import { ImageComparison } from '@/components/ImageComparison';
