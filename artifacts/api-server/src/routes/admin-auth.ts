@@ -91,6 +91,7 @@ router.post('/admin/login', (req: Request, res: Response) => {
 
   res.cookie(COOKIE_NAME, token, {
     httpOnly: true,
+    secure: true,
     sameSite: 'lax',
     maxAge: COOKIE_MAX_AGE_MS,
     path: '/',

@@ -7,6 +7,7 @@ import { ImageComparison } from '@/components/ImageComparison';
 import { useCredits } from '@/hooks/use-credits';
 import { useToast } from '@/hooks/use-toast';
 
+
 // ─── Pure-JS Enhancement Worker (no importScripts — starts instantly) ─────────
 const WORKER_SRC = `
 var c255 = 1 / 255;
@@ -348,15 +349,29 @@ export default function ImageEnhancer() {
   };
 
   const handleFileSelect = useCallback((file: File) => {
-    setOriginalUrl(URL.createObjectURL(file));
+    setOriginalUrl(prev => {
+      if (prev) URL.revokeObjectURL(prev);
+      return URL.createObjectURL(file);
+    });
     setOriginalFile(file);
-    setResultUrl(null);
+    setResultUrl(prev => {
+      if (prev && prev.startsWith('blob:')) URL.revokeObjectURL(prev);
+      return null;
+    });
     setResultSize(null);
   }, []);
 
   const clearSelection = useCallback(() => {
-    setOriginalUrl(null); setOriginalFile(null);
-    setResultUrl(null);   setResultSize(null);
+    setOriginalUrl(prev => {
+      if (prev) URL.revokeObjectURL(prev);
+      return null;
+    });
+    setOriginalFile(null);
+    setResultUrl(prev => {
+      if (prev && prev.startsWith('blob:')) URL.revokeObjectURL(prev);
+      return null;
+    });
+    setResultSize(null);
   }, []);
 
   const processImage = useCallback(async () => {
@@ -387,8 +402,10 @@ export default function ImageEnhancer() {
       const worker = await getEnhWorker();
 
       const img = new Image();
-      img.src = URL.createObjectURL(originalFile);
+      const imgUrl = URL.createObjectURL(originalFile);
+      img.src = imgUrl;
       await new Promise(r => { img.onload = r; });
+      URL.revokeObjectURL(imgUrl);
 
       const canvas = document.createElement('canvas');
       canvas.width = img.naturalWidth; canvas.height = img.naturalHeight;

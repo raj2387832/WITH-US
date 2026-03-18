@@ -63,12 +63,35 @@ export default function Pricing() {
 
   useEffect(() => {
     if (successParam && creditsParam) {
-      setMessage(`Payment successful! ${creditsParam} credits added to your account.`);
-      fetchBalance();
+      const sessionId = searchParams.get('session_id');
+      if (sessionId && isAuthenticated) {
+        fetch(apiUrl('/credits/fulfill'), {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sessionId }),
+        })
+          .then(res => res.json())
+          .then(data => {
+            if (data.success) {
+              setMessage(`Payment successful! ${data.credits ?? creditsParam} credits added to your account.`);
+            } else {
+              setMessage(`Payment successful! ${creditsParam} credits will be added shortly.`);
+            }
+            fetchBalance();
+          })
+          .catch(() => {
+            setMessage(`Payment successful! ${creditsParam} credits will be added shortly.`);
+            fetchBalance();
+          });
+      } else {
+        setMessage(`Payment successful! ${creditsParam} credits added to your account.`);
+        fetchBalance();
+      }
     } else if (cancelledParam) {
       setMessage('Payment cancelled. No charges were made.');
     }
-  }, [successParam, creditsParam, cancelledParam, fetchBalance]);
+  }, [successParam, creditsParam, cancelledParam, fetchBalance, isAuthenticated]);
 
   const claimDaily = async () => {
     if (!balance?.canClaimDaily) return;

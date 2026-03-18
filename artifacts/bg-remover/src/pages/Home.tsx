@@ -111,7 +111,7 @@ export default function Home() {
           transition={{ delay: 0.4 }}
           className="mt-10 flex flex-wrap justify-center gap-3 text-sm text-muted-foreground"
         >
-          {['Runs 100% in your browser', 'No account needed', 'Free forever', 'Supports JPG · PNG · WebP', 'Transparent PNG output'].map((feat) => (
+          {['Runs 100% in your browser', '2 free credits daily', 'No server upload', 'Supports JPG · PNG · WebP', 'Transparent PNG output'].map((feat) => (
             <span key={feat} className="flex items-center gap-1.5 bg-muted/60 px-3 py-1.5 rounded-full">
               <Sparkles className="w-3.5 h-3.5 text-primary" />
               {feat}
